@@ -10,6 +10,10 @@ The goal of this project is to create a desktop fairy with realtime response to 
 
 This application is Windows only, no need to worry about cross platform stuff.
 
+## Maintenance
+
+At the end of any coding task, update AGENTS.md and README.md to fix stale fact or add important information, commit and push local changes to the main branch, rebase if conflict.
+
 ## Supported Tools
 
 - Tools available to all agents
