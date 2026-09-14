@@ -29,7 +29,7 @@ public:
 };
 GUI_REGISTER_PLUGIN(FairySkinPlugin)
 
-class FairyDesktopWindow : public fatfish::ui::FairyWindow
+class FairyDesktopWindow : public fatfish::ui::FairyWindow, public INativeControllerListener
 {
 private:
 	FilePath                                envFolder;
@@ -78,6 +78,18 @@ private:
 	}
 
 public:
+	void GlobalTimer() override
+	{
+		auto milliseconds = GetTickCount64();
+		if (milliseconds - lastFrameTime >= 1000)
+		{
+			// Keep every frame visible for a full second, even if the UI was briefly busy.
+			lastFrameTime = milliseconds;
+			playback.Advance();
+			fairyImage->SetImage(images[playback.CurrentFrame().GetFullPath()], 0);
+		}
+	}
+
 	FairyDesktopWindow(const FilePath& environment, Ptr<DesktopTheme> theme, vuint64_t seed)
 		: envFolder(environment)
 		, playback(theme, seed)
@@ -113,16 +125,13 @@ public:
 		events->mouseDown.AttachMethod(this, &FairyDesktopWindow::OnLeftButtonDown);
 		events->mouseMove.AttachMethod(this, &FairyDesktopWindow::OnMouseMove);
 		events->mouseUp.AttachMethod(this, &FairyDesktopWindow::OnMouseUp);
-		AddAnimation(IGuiAnimation::CreateAnimation([this](vuint64_t milliseconds)
-		{
-			if (milliseconds - lastFrameTime >= 1000)
-			{
-				// Keep every frame visible for a full second, even if the UI was briefly busy.
-				lastFrameTime = milliseconds;
-				playback.Advance();
-				fairyImage->SetImage(images[playback.CurrentFrame().GetFullPath()], 0);
-			}
-		}));
+		lastFrameTime = GetTickCount64();
+		GetCurrentController()->CallbackService()->InstallListener(this);
+	}
+
+	~FairyDesktopWindow()
+	{
+		GetCurrentController()->CallbackService()->UninstallListener(this);
 	}
 };
 

@@ -83,6 +83,8 @@ HTTP/HTTPS 网页 GET 使用 Vlpp 的 `HttpClientApi`。带认证的模型 POST 
 
 `Agents/Desktop.h` 提供位置配置、主题目录读取和三遍播放顺序，GUI 只负责目录定位、图片解码、窗口和定时显示。新增离线用例覆盖配置校验、元数据和播放边界。PowerShell 7 中运行 `& "$PWD/FatFish/UnitTest/Invoke-Fairy.ps1" -Configuration Debug -Platform x64` 可检查实际窗口：它使用临时复制的可执行文件和主题，从其他工作目录启动，检查透明置顶、动画变化、拖动保存、重启恢复和菜单退出，不读取真实配置或密钥。
 
+主窗口实现 `INativeControllerListener::GlobalTimer`，复用 GacUI 已启动的全局定时器，每经过至少 1000 毫秒才更新一帧。窗口完成初始化后注册监听器，析构时注销；无需创建 `IGuiAnimation` 或额外启动定时器。
+
 主题图片保存在 `themes`：`theme.json` 将文件夹名映射到中文主题名，每个主题的 `index.json` 将动画名映射到独立帧数（不包含播放重复次数），`reference.png` 保留原始角色参考图。更新任务见 [themes/job.updateThemes.prompt.md](themes/job.updateThemes.prompt.md)，其中 `xN` 指定对应阶段的帧数。现有 `loli_maid`（萝莉小妹抖）包含 10 组动画，共 34 帧，文件按 `<动画名>_1.png` 起连续编号。
 
 | 动画 | 帧数 | 内容 |

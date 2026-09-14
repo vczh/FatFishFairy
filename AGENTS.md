@@ -217,6 +217,8 @@ For `reading_manga`, the viewer sees the book's outer covers; a turning interior
 
 The desktop player uses the first theme in `themes/theme.json`, selects an animation series randomly within that theme, shows one frame per second, and plays its complete frame sequence three consecutive times in total. It selects the next series randomly only after the last frame of the third playthrough, and seeds its random generator afresh on each process start. `index.json` defines the distinct frame count. Playback is implemented by `Agents/Desktop.cpp` and the GUI timer, separately from the asset update job.
 
+`FairyDesktopWindow` implements `INativeControllerListener::GlobalTimer` and updates the image only after at least 1000 monotonic milliseconds. Register the listener after initializing the window and unregister it in the derived destructor. GacUI already runs the global timer; do not start a separate timer or create an `IGuiAnimation` for frame playback.
+
 ## Important Learning
 
 <!--
