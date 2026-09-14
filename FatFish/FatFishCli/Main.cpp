@@ -56,9 +56,13 @@ int wmain(int argc, wchar_t* argv[])
 		{
 			auto root = repository.Length() == 0 ? FairyApplication::FindRepositoryRoot() : FilePath(repository);
 			FairyApplication application(root);
+			application.ResponseReceived.Add(Func<void(bool, const WString&)>([](bool vision, const WString& message)
+			{
+				Console::WriteLine(WString(vision ? L"Vision> " : L"Fairy> ") + message);
+			}));
 			if (once)
 			{
-				Console::WriteLine(application.RunRound());
+				application.RunRound();
 			}
 			else
 			{
@@ -74,7 +78,7 @@ int wmain(int argc, wchar_t* argv[])
 					else if (key == L'\r')
 					{
 						Console::WriteLine(L"Observing...");
-						Console::WriteLine(application.RunRound());
+						application.RunRound();
 					}
 				}
 			}

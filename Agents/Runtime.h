@@ -31,6 +31,9 @@ namespace fatfish
 		void                                            Initialize();
 
 	public:
+		// Complete assistant JSON messages, before tool execution; true identifies Vision.
+		vl::Event<void(bool, const vl::WString&)>         ResponseReceived;
+
 		explicit                                        FairyApplication(const vl::filesystem::FilePath& root);
 		// Inject I/O to exercise the actual agent loop without credentials or desktop access.
 		                                                FairyApplication(const vl::filesystem::FilePath& root, const ApiConfig& apiConfig, const AgentPrompts& agentPrompts,

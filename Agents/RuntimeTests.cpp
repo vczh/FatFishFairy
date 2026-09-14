@@ -101,6 +101,8 @@ data: [DONE]
 		AgentPrompts prompts{ L"工具说明", L"记忆指引", L"视觉请求", L"精灵请求", L"固定性格" };
 		vint captures = 0;
 		vint requestIndex = 0;
+		List<bool> responseAgents;
+		List<Ptr<json::JsonNode>> responses;
 		auto capture = [&](List<MonitorSnapshot>& snapshots)
 		{
 			captures++;
@@ -124,6 +126,7 @@ data: [DONE]
 )sse");
 		auto complete = [&](const WString& body)
 		{
+			CHECK_ERROR(responses.Count() == requestIndex, L"Report each complete response before requesting the next one.");
 			auto request = ParseJson(body, parser);
 			auto model = GetString(request, L"model");
 			auto messages = GetField(request, L"messages").Cast<json::JsonArray>();
@@ -170,9 +173,27 @@ data: [DONE]
 		};
 		auto web = [](const WString&) -> WebResponse { throw Exception(L"Unexpected network request in offline test."); };
 		FairyApplication application(folder.root, config, prompts, complete, capture, web);
+		application.ResponseReceived.Add(Func<void(bool, const WString&)>([&](bool vision, const WString& message)
+		{
+			CHECK_ERROR(!wcschr(message.Buffer(), L'\n') && !wcschr(message.Buffer(), L'\r'), L"A response must fit on one JSON log line.");
+			auto parsed = ParseJson(message, parser);
+			CHECK_ERROR(GetString(parsed, L"role") == L"assistant" && !GetField(parsed, L"choices"), L"Report the assistant message, not the transport envelope.");
+			if (!vision && responses.Count() == 2)
+				CHECK_ERROR(!File(folder.root / L"memory" / L"interests" / L"cpp.md").Exists(), L"Report tool requests before executing them.");
+			responseAgents.Add(vision);
+			responses.Add(parsed);
+		}));
 		CHECK_ERROR(application.RunRound() == L"今天也在研究 C++ 呀。", L"Fairy speak output.");
-		CHECK_ERROR(application.RunRound().Length() == 0, L"Ordinary assistant content must not be shown to the user.");
+		CHECK_ERROR(application.RunRound().Length() == 0, L"Ordinary assistant content must not be treated as speech.");
 		CHECK_ERROR(captures == 2 && requestIndex == 7, L"Each round must capture once and run vision before fairy.");
+		CHECK_ERROR(responses.Count() == 7, L"Log all replies, including speak calls and empty final messages.");
+		for (vint i = 0; i < responses.Count(); i++)
+			CHECK_ERROR(responseAgents[i] == (i == 0 || i == 1 || i == 4 || i == 5), L"Each response needs the correct agent label.");
+		auto visionCalls = GetField(responses[0], L"tool_calls").Cast<json::JsonArray>();
+		CHECK_ERROR(visionCalls->items.Count() == 1 && GetString(GetField(visionCalls->items[0], L"function"), L"name") == L"speak", L"Keep vision speak in the JSON log.");
+		CHECK_ERROR(GetField(responses[2], L"content").Cast<json::JsonLiteral>()->value == json::JsonLiteralValue::Null, L"Preserve the original JSON message, including null content.");
+		CHECK_ERROR(GetField(responses[2], L"tool_calls").Cast<json::JsonArray>()->items.Count() == 3, L"Log all tool calls from a mixed reply.");
+		CHECK_ERROR(GetString(responses[6], L"content") == L"继续加油。", L"Log ordinary assistant content even when there is no speak.");
 		CHECK_ERROR(File(folder.root / L"memory" / L"interests" / L"cpp.md").ReadAllTextByBom() == L"用户阅读 C++", L"Tool memory must persist to disk.");
 
 		// A failed fairy response must not poison the next round's conversation.

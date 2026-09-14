@@ -139,12 +139,8 @@ namespace fatfish
 		return json::JsonToString(result);
 	}
 
-	Ptr<json::JsonObject> ReadAssistantResponse(const WString& text, json::Parser& parser)
+	Ptr<json::JsonObject> ReadAssistantResponse(Ptr<json::JsonNode> choice)
 	{
-		auto response = ParseChatCompletion(text, parser);
-		auto choices = GetField(response, L"choices").Cast<json::JsonArray>();
-		if (!choices || choices->items.Count() != 1) throw Exception(L"Expected one chat response choice.");
-		auto choice = choices->items[0];
 		auto finish = GetString(choice, L"finish_reason");
 		if (finish != L"stop" && finish != L"tool_calls") throw Exception(L"Chat completion did not finish normally.");
 		auto message = GetField(choice, L"message");
@@ -200,7 +196,13 @@ namespace fatfish
 			Ptr<json::JsonObject> assistant;
 			try
 			{
-				assistant = ReadAssistantResponse(response, parser);
+				auto parsed = ParseChatCompletion(response, parser);
+				auto choices = GetField(parsed, L"choices").Cast<json::JsonArray>();
+				if (!choices || choices->items.Count() != 1) throw Exception(L"Expected one chat response choice.");
+				auto choice = choices->items[0];
+				auto message = GetField(choice, L"message");
+				if (message) ResponseReceived(vision, json::JsonToString(message));
+				assistant = ReadAssistantResponse(choice);
 				if (vision && spoken.Length() == 0 && !GetField(assistant, L"tool_calls"))
 					throw Exception(L"视觉观察必须通过 speak 工具提交，普通文字不会转发。");
 			}
@@ -229,7 +231,7 @@ namespace fatfish
 			}
 			else
 			{
-				// Only speak is observable, both by the fairy and by the user.
+				// Speech is separate from the complete response messages exposed to the UI.
 				return spoken;
 			}
 		}
