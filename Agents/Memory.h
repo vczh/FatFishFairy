@@ -32,8 +32,6 @@ namespace fatfish
 		void														Search(const vl::WString& query, vl::collections::List<MemoryMatch>& results, vl::vint limit = 100) const;
 		void														ListFiles(vl::collections::List<vl::WString>& paths) const;
 	};
-
-	extern void RunMemoryTests();
 }
 
 #endif

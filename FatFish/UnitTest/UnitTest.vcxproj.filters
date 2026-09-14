@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="Current" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source Files"><Extensions>cpp;c;cc;cxx;h;hpp;hxx;inl</Extensions></Filter>
+    <Filter Include="Header Files"><Extensions>h;hpp;hxx;inl</Extensions></Filter>
+    <Filter Include="Resource Files"><Extensions>rc;ico;bmp;png</Extensions></Filter>
+    <Filter Include="PlatformSmoke" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="Main.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="..\..\UnitTest\CompletionStreamTests.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="..\..\UnitTest\MemoryTests.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="..\..\UnitTest\OutputTests.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="..\..\UnitTest\PlatformTests.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="..\..\UnitTest\RuntimeTests.cpp"><Filter>Source Files</Filter></ClCompile>
+    <None Include="..\..\UnitTest\PlatformSmoke\Invoke.ps1"><Filter>PlatformSmoke</Filter></None>
+    <None Include="..\..\UnitTest\PlatformSmoke\Server.ps1"><Filter>PlatformSmoke</Filter></None>
+  </ItemGroup>
+</Project>

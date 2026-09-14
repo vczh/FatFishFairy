@@ -8,14 +8,14 @@
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>18.0</VCProjectVersion>
-    <ProjectGuid>{099019C1-F655-47F8-A6AA-28EC51F6803C}</ProjectGuid>
+    <ProjectGuid>{73C7C69E-272F-44F4-A270-086E5A974943}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
-    <RootNamespace>Agents</RootNamespace>
+    <RootNamespace>UnitTest</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Label="Configuration">
-    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <ConfigurationType>Application</ConfigurationType>
     <PlatformToolset>v145</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
     <PreferredToolArchitecture>x64</PreferredToolArchitecture>
@@ -31,32 +31,20 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <ItemGroup>
-    <ClCompile Include="..\..\Release\Import\Vlpp.cpp" />
-    <ClCompile Include="..\..\Release\Import\Vlpp.Windows.cpp" />
-    <ClCompile Include="..\..\Release\Import\VlppOS.cpp" />
-    <ClCompile Include="..\..\Release\Import\VlppOS.Windows.cpp" />
-    <ClCompile Include="..\..\Release\Import\VlppRegex.cpp" />
-    <ClCompile Include="..\..\Release\Import\VlppReflection.cpp" />
-    <ClCompile Include="..\..\Release\Import\VlppGlrParser.cpp" />
-    <ClCompile Include="..\..\Agents\Json.cpp" />
-    <ClCompile Include="..\..\Agents\Output.cpp" />
-    <ClCompile Include="..\..\Agents\Memory.cpp" />
-    <ClCompile Include="..\..\Agents\Platform.cpp" />
-    <ClCompile Include="..\..\Agents\Runtime.cpp" />
-    <ClInclude Include="..\..\Release\Import\Vlpp.h" />
-    <ClInclude Include="..\..\Release\Import\VlppOS.h" />
-    <ClInclude Include="..\..\Release\Import\VlppOS.Windows.h" />
-    <ClInclude Include="..\..\Release\Import\VlppRegex.h" />
-    <ClInclude Include="..\..\Release\Import\VlppReflection.h" />
-    <ClInclude Include="..\..\Release\Import\VlppGlrParser.h" />
-    <ClInclude Include="..\..\Agents\Json.h" />
-    <ClInclude Include="..\..\Agents\Output.h" />
-    <ClInclude Include="..\..\Agents\Memory.h" />
-    <ClInclude Include="..\..\Agents\Platform.h" />
-    <ClInclude Include="..\..\Agents\Runtime.h" />
+    <ProjectReference Include="..\Agents\Agents.vcxproj">
+      <Project>{099019C1-F655-47F8-A6AA-28EC51F6803C}</Project>
+      <UseLibraryDependencyInputs>true</UseLibraryDependencyInputs>
+    </ProjectReference>
   </ItemGroup>
   <ItemGroup>
-    <Natvis Include="..\..\Release\Import\vlpp.natvis" />
+    <ClCompile Include="Main.cpp" />
+    <ClCompile Include="..\..\UnitTest\CompletionStreamTests.cpp" />
+    <ClCompile Include="..\..\UnitTest\MemoryTests.cpp" />
+    <ClCompile Include="..\..\UnitTest\OutputTests.cpp" />
+    <ClCompile Include="..\..\UnitTest\PlatformTests.cpp" />
+    <ClCompile Include="..\..\UnitTest\RuntimeTests.cpp" />
+    <None Include="..\..\UnitTest\PlatformSmoke\Invoke.ps1" />
+    <None Include="..\..\UnitTest\PlatformSmoke\Server.ps1" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />

@@ -17,11 +17,8 @@
     <ClCompile Include="..\..\Agents\Json.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="..\..\Agents\Output.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="..\..\Agents\Memory.cpp"><Filter>Source Files</Filter></ClCompile>
-    <ClCompile Include="..\..\Agents\MemoryTests.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="..\..\Agents\Platform.cpp"><Filter>Source Files</Filter></ClCompile>
-    <ClCompile Include="..\..\Agents\PlatformTests.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="..\..\Agents\Runtime.cpp"><Filter>Source Files</Filter></ClCompile>
-    <ClCompile Include="..\..\Agents\RuntimeTests.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClInclude Include="..\..\Release\Import\Vlpp.h"><Filter>Source Files\Vlpp</Filter></ClInclude>
     <ClInclude Include="..\..\Release\Import\VlppOS.h"><Filter>Source Files\Vlpp</Filter></ClInclude>
     <ClInclude Include="..\..\Release\Import\VlppOS.Windows.h"><Filter>Source Files\Vlpp</Filter></ClInclude>

@@ -8,6 +8,8 @@ Project("{BC8A1FFA-BEE3-4634-8014-F334798102B3}") = "Agents", "Agents\Agents.vcx
 EndProject
 Project("{BC8A1FFA-BEE3-4634-8014-F334798102B3}") = "FatFishFairy", "FatFishFairy\FatFishFairy.vcxproj", "{D9A0D229-B3BC-47D8-AC97-F8BB5C4E4B93}"
 EndProject
+Project("{BC8A1FFA-BEE3-4634-8014-F334798102B3}") = "UnitTest", "UnitTest\UnitTest.vcxproj", "{73C7C69E-272F-44F4-A270-086E5A974943}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Win32 = Debug|Win32
@@ -16,6 +18,14 @@ Global
 		Release|x64 = Release|x64
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{73C7C69E-272F-44F4-A270-086E5A974943}.Debug|Win32.ActiveCfg = Debug|Win32
+		{73C7C69E-272F-44F4-A270-086E5A974943}.Debug|Win32.Build.0 = Debug|Win32
+		{73C7C69E-272F-44F4-A270-086E5A974943}.Release|Win32.ActiveCfg = Release|Win32
+		{73C7C69E-272F-44F4-A270-086E5A974943}.Release|Win32.Build.0 = Release|Win32
+		{73C7C69E-272F-44F4-A270-086E5A974943}.Debug|x64.ActiveCfg = Debug|x64
+		{73C7C69E-272F-44F4-A270-086E5A974943}.Debug|x64.Build.0 = Debug|x64
+		{73C7C69E-272F-44F4-A270-086E5A974943}.Release|x64.ActiveCfg = Release|x64
+		{73C7C69E-272F-44F4-A270-086E5A974943}.Release|x64.Build.0 = Release|x64
 		{099019C1-F655-47F8-A6AA-28EC51F6803C}.Debug|Win32.ActiveCfg = Debug|Win32
 		{099019C1-F655-47F8-A6AA-28EC51F6803C}.Debug|Win32.Build.0 = Debug|Win32
 		{099019C1-F655-47F8-A6AA-28EC51F6803C}.Release|Win32.ActiveCfg = Release|Win32

@@ -80,12 +80,14 @@ In `REPO-ROOT/env` these files are submitted to agents accordingly, in each requ
 - `env`: files to be loaded.
 - `memory`: the folder for agents to maintain their memory.
 - `Release`: the submodule to `https://vczh-libraries/Release`.
-- `Agents`: the folder for all shared source files.
+- `Agents`: shared feature source files only; no test cases, fixtures, or test runners.
+- `UnitTest`: all test cases and fixtures, including the opt-in `PlatformSmoke` integration scripts.
 - `FatFish`:
   - `FatFish.sln`: The solution file.
   - `Agents/Agents.vcxproj`: A shared library to index all `Agents` source files.
   - `FatFishCli/FatFishCli.vcxproj`.
   - `FatFishFairy/FatFishFairy.vcxproj`.
+  - `UnitTest/UnitTest.vcxproj`: A dedicated console test executable referencing `Agents` and using GacUI's Vlpp unit test framework.
 
 ## Important vcxproj Settings
 
@@ -127,8 +129,9 @@ You are not recommended to modify this library, but if you really need to:
 
 ### Agents
 
-- `FatFishCli`, `FatFishFairy` or any other test apps should only be a thin UI layer.
+- `FatFishCli`, `FatFishFairy` or any other interactive test apps should only be a thin UI layer.
 - All source files about agents and other features should be in the `REPO-ROOT/Agents` folder.
+- Keep test cases and fixtures in `REPO-ROOT/UnitTest`, compiled only by the `UnitTest` project. Do not expose test runners from feature headers or add a `--self-test` mode to `FatFishCli`.
 - Prompts must require both the vision agent and the fairy agent to call `speak` exactly once per observation request, including all tool-feedback follow-ups. Vision submits its complete nonempty observation; fairy uses an empty `text` when it has nothing to say.
 - The runtime must tolerate extra `speak` calls from either agent: concatenate all successfully parsed nonempty texts in execution order with newlines, both within one response and across follow-ups. Do not discard repeated text or reject extra calls merely for exceeding the prompted count. Empty texts add no separator.
 - Keep speech accumulation local to each agent's current round. Pass the full vision result to the fairy and return the full fairy result; ordinary assistant text is not part of either result.
@@ -146,9 +149,14 @@ CONTENT
 ****************
 ```
 
-### Verification
+## UnitTest and Verification
 
+- Register offline tests with GacUI's Vlpp `TEST_FILE` and `TEST_CASE` macros, use framework assertions such as `TEST_ASSERT` and `TEST_EXCEPTION`, and run them through `vl::unittest::UnitTest::RunAndDisposeTests`. Finalize global storage and check for memory leaks in Debug builds.
+- Verification must build the solution and run the complete `UnitTest` suite successfully, with no skipped test files or memory leaks. When adding or changing project configurations, build and run `UnitTest` for Debug/Release × Win32/x64.
+- From `REPO-ROOT/FatFish`, run `& "$PWD/../Release/.github/Scripts/copilotBuild.ps1" -Configuration Debug -Platform x64`, followed by `& "$PWD/../Release/.github/Scripts/copilotExecute.ps1" -Mode UnitTest -Executable UnitTest -Configuration Debug -Platform x64`. Use the corresponding configuration and platform for the other builds.
+- Offline `UnitTest` verification must use synthetic model responses and temporary directories without reading real credentials, capturing the desktop, or making network requests. Cover memory safety, configuration validation, completion streaming, response formatting, error feedback, and multi-round agent execution.
 - Offline verification must cover multiple `speak` calls within one response and across follow-ups for both agents, complete vision-to-fairy forwarding, per-round result isolation, and an empty fairy `speak`.
+- For platform integration verification, run `UnitTest/PlatformSmoke/Invoke.ps1` in PowerShell 7 after building `FatFishCli`. This opt-in test captures the desktop and uses only a local loopback fixture.
 - Verification must include 10 consecutive successful `ENTER` rounds in `FatFishCli`, using the configured real models in one running process.
 - Each round must finish the vision agent followed by the fairy agent successfully. After all 10 rounds, press `ESC` and verify a clean exit.
 - If any round fails, fix the problem and restart the 10-round verification before reporting completion.

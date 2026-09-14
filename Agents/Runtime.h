@@ -45,8 +45,6 @@ namespace fatfish
 		vl::WString                                     RunRound();
 		static vl::filesystem::FilePath                  FindRepositoryRoot();
 	};
-
-	extern void RunSelfTests();
 }
 
 #endif
