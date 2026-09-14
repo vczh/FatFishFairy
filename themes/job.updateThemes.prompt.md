@@ -34,4 +34,4 @@ FatFishFairy会随机选择当前主题的一个动画系列，每1秒一帧，�
 - [ ] playing: 坐在地上玩玩具飞机。
 - [ ] programming: 坐着人体工学椅子在书桌前面编程。
 - [ ] drawing: 使用电子画板在电脑前绘制蓝色大肥鱼自己。
-- [ ] transformer: 像变形金刚一样变成一条蓝色鲸鱼x5
+- [ ] transformer: 像变形金刚一样变成一条蓝色鲸鱼x5。
