@@ -79,15 +79,22 @@ In `REPO-ROOT/env` these files are submitted to agents accordingly, in each requ
 
 ### the Vision
 
-- Requests to the agent should combine `REPO-ROOT/env/Tools.md` and `REPO-ROOT/env/Request_Vision.md`.
-- Submit snapshots of all monitors.
+- Requests to the agent should combine these prompt files in `REPO-ROOT/env` in this order:
+  - `Tools.md`.
+  - `Guidance.md`
+  - `Request_Vision.md`
+  - Embed snapshots of all monitors.
 - Expect very detailed description from the snapshot.
 - Every round starts a new session, nothing from the last round is needed.
 
 ### The Fairy
 
-- Requests to the agent should combine `REPO-ROOT/env/Tools.md` and `REPO-ROOT/env/Request_Fairy.md`.
-- Submit description from the snapshot.
+- Requests to the agent should combine these prompt files in `REPO-ROOT/env` in this order:
+  - `Tools.md`
+  - `Guidance.md`
+  - `Request_Fairy.md`
+  - `Character.md`
+  - Description from the snapshots.
 - The agent will access and maintain memories about anything, especially any interesting stuff about the user, try to summarize and infer what the user like, what the user is usually doing, etc.
 - The agent may choose to say something to the user.
 - Every round runs in the same session.
