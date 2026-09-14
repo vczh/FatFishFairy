@@ -38,6 +38,8 @@ Set-Location FatFish
 
 验证必须包含完整的 `UnitTest` 测试通过且无内存泄漏，以及同一个 `FatFishCli` 进程中使用真实模型连续完成 10 轮 ENTER，最后按 ESC 正常退出。修改项目配置时，还需构建并运行 Debug/Release × Win32/x64 的 `UnitTest`。
 
+仅修改主题资源或文档、没有修改代码或项目配置时，只需检查变更的资源与元数据，无需构建、运行 `UnitTest` 或真实模型 CLI 验证。
+
 构建后，在仓库根目录的 PowerShell 7 中运行 `& "$PWD/FatFish/UnitTest/Invoke.ps1" -Configuration Debug -Platform x64` 可验证实际截图、PNG 编码、HTTP 请求和记忆写入。入口脚本 `Invoke.ps1` 与本机回环测试服务器 `Server.ps1` 均直接位于 `FatFish/UnitTest`。此测试将截图仅发送到本机回环测试服务器，在内存中解码，不保存图片、不连接真实模型服务；结束后还原调试参数并删除临时目录。
 
 `Agents` 静态库包含全部代理、工具、配置和截图逻辑；CLI 负责参数、按键、输出和目录定位。CLI 先读取自身可执行文件的完整路径，再用 `vl::filesystem::FilePath` 计算 `env` 和 `memory`，作为两个独立路径传给 `FairyApplication`；`Agents` 不查找仓库根目录，也不假设两个目录的名称或相对位置。按当前构建布局，x64 从可执行文件所在目录使用 `../../../env` 和 `../../../memory`，Win32 使用 `../../env` 和 `../../memory`，Debug 与 Release 相同。`--repo-root` 在 CLI 中覆盖根目录，未来 `FatFishFairy` 也遵循同样的目录传入设计。每轮包含全部显示器的 PNG 图像、坐标和尺寸，支持负坐标与混合 DPI。图像只在内存中处理并发送给配置的模型服务器；精灵只接收视觉描述。`env` 的中文工具说明、记忆指引和角色请求随每次模型提交发送，精灵额外接收原有的 `Character.md`。

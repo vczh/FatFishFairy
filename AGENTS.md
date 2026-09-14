@@ -162,6 +162,7 @@ CONTENT
 
 ## UnitTest and Verification
 
+- Changes limited to theme assets or documentation only require checking the changed assets and metadata; the solution build, UnitTest suite and real-model CLI verification below are not required when no code or project configuration changes.
 - Register offline tests with GacUI's Vlpp `TEST_FILE` and `TEST_CASE` macros, use framework assertions such as `TEST_ASSERT` and `TEST_EXCEPTION`, and run them through `vl::unittest::UnitTest::RunAndDisposeTests`. Finalize global storage and check for memory leaks in Debug builds.
 - Verification must build the solution and run the complete `UnitTest` suite successfully, with no skipped test files or memory leaks. When adding or changing project configurations, build and run `UnitTest` for Debug/Release × Win32/x64.
 - From `REPO-ROOT/FatFish`, run `& "$PWD/../Release/.github/Scripts/copilotBuild.ps1" -Configuration Debug -Platform x64`, followed by `& "$PWD/../Release/.github/Scripts/copilotExecute.ps1" -Mode UnitTest -Executable UnitTest -Configuration Debug -Platform x64`. Use the corresponding configuration and platform for the other builds.
