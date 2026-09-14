@@ -39,6 +39,7 @@
     <ClCompile Include="..\..\Release\Import\VlppReflection.cpp" />
     <ClCompile Include="..\..\Release\Import\VlppGlrParser.cpp" />
     <ClCompile Include="..\..\Agents\Json.cpp" />
+    <ClCompile Include="..\..\Agents\Output.cpp" />
     <ClCompile Include="..\..\Agents\Memory.cpp" />
     <ClCompile Include="..\..\Agents\MemoryTests.cpp" />
     <ClCompile Include="..\..\Agents\Platform.cpp" />
@@ -52,6 +53,7 @@
     <ClInclude Include="..\..\Release\Import\VlppReflection.h" />
     <ClInclude Include="..\..\Release\Import\VlppGlrParser.h" />
     <ClInclude Include="..\..\Agents\Json.h" />
+    <ClInclude Include="..\..\Agents\Output.h" />
     <ClInclude Include="..\..\Agents\Memory.h" />
     <ClInclude Include="..\..\Agents\Platform.h" />
     <ClInclude Include="..\..\Agents\Runtime.h" />

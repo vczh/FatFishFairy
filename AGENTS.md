@@ -134,7 +134,14 @@ You are not recommended to modify this library, but if you really need to:
 
 Accept two keys:
 - `ESC`: exit.
-- `ENTER`: run the vision agent followed by the fairy agent, printing each complete assistant JSON message as `Vision> JSON` or `Fairy> JSON`, including the vision's `speak` call. Do not print requests sent to agents or separately print the plain text produced by `speak`; the vision observation is passed to the fairy.
+- `ENTER`: run the vision agent followed by the fairy agent. Keep other tool calls and ordinary responses as `Vision> JSON` or `Fairy> JSON`. Render each `speak` call from either agent as the block below, replacing `AGENT` with `Vision` or `Fairy` and `CONTENT` with its decoded text. Keep mixed tool calls in order without duplicating speech in JSON. Do not print requests sent to agents; the vision observation is passed to the fairy.
+
+```text
+AGENT (speak)>
+****************
+CONTENT
+****************
+```
 
 ### Verification
 

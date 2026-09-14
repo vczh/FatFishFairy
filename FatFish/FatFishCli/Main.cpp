@@ -1,4 +1,5 @@
 #include "../../Agents/Runtime.h"
+#include "../../Agents/Output.h"
 #include <VlppOS.Windows.h>
 #include <conio.h>
 
@@ -56,9 +57,10 @@ int wmain(int argc, wchar_t* argv[])
 		{
 			auto root = repository.Length() == 0 ? FairyApplication::FindRepositoryRoot() : FilePath(repository);
 			FairyApplication application(root);
-			application.ResponseReceived.Add(Func<void(bool, const WString&)>([](bool vision, const WString& message)
+			vl::glr::json::Parser outputParser;
+			application.ResponseReceived.Add(Func<void(bool, const WString&)>([&](bool vision, const WString& message)
 			{
-				Console::WriteLine(WString(vision ? L"Vision> " : L"Fairy> ") + message);
+				Console::WriteLine(FormatAgentResponse(vision, message, outputParser));
 			}));
 			if (once)
 			{

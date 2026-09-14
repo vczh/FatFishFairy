@@ -1,4 +1,5 @@
 #include "Runtime.h"
+#include "Output.h"
 #include <Windows.h>
 
 using namespace vl;
@@ -282,11 +283,38 @@ data: [DONE]
 		CHECK_ERROR(rejected && loopRequests == 24, L"Tool loop must have a finite request budget.");
 	}
 
+	void RunOutputTests()
+	{
+		json::Parser parser;
+		auto speech = WString(LR"({"role":"assistant","content":null,"tool_calls":[{"id":"say","type":"function","function":{"name":"speak","arguments":"{\"text\":\"第一行\\n\\\"第二行\\\"\"}"}}]})");
+		CHECK_ERROR(FormatAgentResponse(true, speech, parser) == L"Vision (speak)>\n****************\n第一行\n\"第二行\"\n****************", L"Speak output must decode JSON escapes and use the requested block format.");
+		auto mixed = WString(LR"({"role":"assistant","content":"说明","tool_calls":[{"id":"a","type":"function","function":{"name":"speak","arguments":"{\"text\":\"先说\"}"}},{"id":"b","type":"function","function":{"name":"file_list","arguments":"{}"}},{"id":"c","type":"function","function":{"name":"speak","arguments":"{\"text\":\"\"}"}},{"id":"d","type":"function","function":{"name":"speak","arguments":"{bad"}}]})");
+		auto formatted = FormatAgentResponse(false, mixed, parser);
+		auto first = wcsstr(formatted.Buffer(), L"Fairy (speak)>\n****************\n先说\n****************");
+		auto tool = wcsstr(formatted.Buffer(), L"\"name\":\"file_list\"");
+		auto second = wcsstr(formatted.Buffer(), L"Fairy (speak)>\n****************\n\n****************");
+		auto invalid = wcsstr(formatted.Buffer(), L"{bad");
+		CHECK_ERROR(first && tool && second && invalid && first < tool && tool < second && second < invalid, L"Keep mixed calls in order, show empty speech, and preserve malformed calls as JSON.");
+		auto content = wcsstr(formatted.Buffer(), L"说明");
+		CHECK_ERROR(content && !wcsstr(content + 2, L"说明"), L"Ordinary content must be logged exactly once in mixed responses.");
+		CHECK_ERROR(!wcsstr(formatted.Buffer(), L"先说\\\""), L"Do not duplicate rendered speech inside JSON.");
+		for (auto unchanged : {
+			LR"({"role":"assistant","content":"普通回复"})",
+			LR"({"role":"assistant","content":""})",
+			LR"({"role":"assistant","tool_calls":[{"id":"list","type":"function","function":{"name":"file_list","arguments":"{}"}}]})",
+			LR"({"role":"assistant","tool_calls":[{"id":"bad","type":"function","function":{"name":"speak","arguments":"{\"text\":true}"}}]})"
+		})
+		{
+			CHECK_ERROR(FormatAgentResponse(false, unchanged, parser) == L"Fairy> " + WString(unchanged), L"Keep non-speech and malformed speech responses as their original JSON.");
+		}
+	}
+
 	void RunSelfTests()
 	{
 		RunMemoryTests();
 		RunPlatformTests();
 		RunCompletionStreamTests();
 		RunRuntimeTests();
+		RunOutputTests();
 	}
 }

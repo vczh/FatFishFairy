@@ -61,20 +61,22 @@ try {
   $report | ConvertTo-Json -Depth 8
   if ($applicationExitCode -ne 0 -or -not $report.passed) { throw 'Platform integration failed; see the sanitized report above.' }
   $responseLines = @($applicationOutput | Where-Object { $_ -match '^(Vision|Fairy)> ' })
-  if ($responseLines.Count -ne 4) { throw 'Expected exactly four JSON response log lines.' }
+  if ($responseLines.Count -ne 3) { throw 'Expected JSON for the two final messages and the non-speak tools.' }
   for ($index = 0; $index -lt $responseLines.Count; $index++) {
-    $expectedPrefix = if ($index -lt 2) { 'Vision> ' } else { 'Fairy> ' }
+    $expectedPrefix = if ($index -eq 0) { 'Vision> ' } else { 'Fairy> ' }
     if (-not $responseLines[$index].StartsWith($expectedPrefix)) { throw 'Incorrect response agent label.' }
     $message = $responseLines[$index].Substring($expectedPrefix.Length) | ConvertFrom-Json -Depth 30
     if ($message.role -ne 'assistant' -or $null -ne $message.choices) { throw 'Expected a complete assistant JSON message.' }
-    if ($index -eq 0 -and $message.tool_calls[0].function.name -ne 'speak') { throw 'Vision speak was omitted from the JSON log.' }
-    if ($index -eq 2 -and $message.tool_calls.Count -ne 3) { throw 'Fairy tool calls were omitted from the JSON log.' }
-    if ($index -in @(1, 3) -and $message.content -ne '') { throw 'Expected an empty final message in the JSON log.' }
+    if ($index -eq 1 -and ($message.tool_calls.Count -ne 2 -or $message.tool_calls[0].function.name -ne 'http_get' -or $message.tool_calls[1].function.name -ne 'file_write')) { throw 'Non-speak tool calls must remain ordered JSON.' }
+    if ($index -in @(0, 2) -and $message.content -ne '') { throw 'Expected an empty final message in the JSON log.' }
+    if (@($message.tool_calls | Where-Object { $_.function.name -eq 'speak' }).Count -ne 0) { throw 'Speak must not be duplicated in the JSON log.' }
   }
-  if ($applicationOutput -contains '本地平台集成测试通过。' -or $applicationOutput -contains '本地屏幕捕获和 PNG 编码验证通过。') {
-    throw 'Speak must not produce a separate plain-text line.'
+  $outputText = ($applicationOutput -join "`n").Replace("`r", '')
+  foreach ($speech in @(@('Vision', '本地屏幕捕获和 PNG 编码验证通过。'), @('Fairy', '本地平台集成测试通过。'))) {
+    $block = $speech[0] + " (speak)>`n****************`n" + $speech[1] + "`n****************"
+    if ([regex]::Matches($outputText, [regex]::Escape($block)).Count -ne 1) { throw 'Expected one correctly formatted speech block per agent.' }
   }
-  Write-Output 'All CLI JSON output checks passed.'
+  Write-Output 'All CLI speech and JSON output checks passed.'
 } finally {
   if ($locationPushed) { Pop-Location }
   if ($null -ne $server -and -not $server.HasExited) { $server.Kill(); [void]$server.WaitForExit(5000) }
