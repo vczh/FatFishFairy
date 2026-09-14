@@ -38,13 +38,13 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Main.cpp" />
-    <ClCompile Include="..\..\UnitTest\CompletionStreamTests.cpp" />
-    <ClCompile Include="..\..\UnitTest\MemoryTests.cpp" />
-    <ClCompile Include="..\..\UnitTest\OutputTests.cpp" />
-    <ClCompile Include="..\..\UnitTest\PlatformTests.cpp" />
-    <ClCompile Include="..\..\UnitTest\RuntimeTests.cpp" />
-    <None Include="..\..\UnitTest\PlatformSmoke\Invoke.ps1" />
-    <None Include="..\..\UnitTest\PlatformSmoke\Server.ps1" />
+    <ClCompile Include="CompletionStreamTests.cpp" />
+    <ClCompile Include="MemoryTests.cpp" />
+    <ClCompile Include="OutputTests.cpp" />
+    <ClCompile Include="PlatformTests.cpp" />
+    <ClCompile Include="RuntimeTests.cpp" />
+    <None Include="Invoke.ps1" />
+    <None Include="Server.ps1" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />

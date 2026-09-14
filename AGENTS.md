@@ -85,12 +85,12 @@ In `REPO-ROOT/env` these files are submitted to agents accordingly, in each requ
 - `memory`: the folder for agents to maintain their memory.
 - `Release`: the submodule to `https://vczh-libraries/Release`.
 - `Agents`: shared feature source files only; no test cases, fixtures, or test runners.
-- `UnitTest`: all test cases and fixtures, including the opt-in `PlatformSmoke` integration scripts.
 - `FatFish`:
   - `FatFish.sln`: The solution file.
   - `Agents/Agents.vcxproj`: A shared library to index all `Agents` source files.
   - `FatFishCli/FatFishCli.vcxproj`.
   - `FatFishFairy/FatFishFairy.vcxproj`.
+  - `UnitTest`: all test cases and fixtures. Keep the opt-in platform integration scripts `Invoke.ps1` and `Server.ps1` directly in this folder, alongside the test sources and project files.
   - `UnitTest/UnitTest.vcxproj`: A dedicated console test executable referencing `Agents` and using GacUI's Vlpp unit test framework.
 
 ## Important vcxproj Settings
@@ -139,7 +139,7 @@ You are not recommended to modify this library, but if you really need to:
 - Default folder resolution must depend on the executable location, not the working directory or an upward search for marker files. Any explicit path override (such as CLI `--repo-root PATH`) is also resolved by the UI before passing the two folders to `Agents`.
 - Code in `Agents` must not discover or store the repository root, inspect the executable path, or assume the supplied folders' names, locations or relationship. Load configuration and prompts directly from the supplied environment folder and initialize `MemoryStore` with the exact supplied memory folder. The constructor that injects configuration, prompts and I/O for offline tests only needs the supplied memory folder.
 - All source files about agents and other features should be in the `REPO-ROOT/Agents` folder.
-- Keep test cases and fixtures in `REPO-ROOT/UnitTest`, compiled only by the `UnitTest` project. Do not expose test runners from feature headers or add a `--self-test` mode to `FatFishCli`.
+- Keep test cases and fixtures in `REPO-ROOT/FatFish/UnitTest`, compiled only by the `UnitTest` project. Keep all test PowerShell scripts directly in this folder. Do not expose test runners from feature headers or add a `--self-test` mode to `FatFishCli`.
 - Prompts must require both the vision agent and the fairy agent to call `speak` exactly once per observation request, including all tool-feedback follow-ups. Vision submits its complete nonempty observation; fairy uses an empty `text` when it has nothing to say.
 - The runtime must tolerate extra `speak` calls from either agent: concatenate all successfully parsed nonempty texts in execution order with newlines, both within one response and across follow-ups. Do not discard repeated text or reject extra calls merely for exceeding the prompted count. Empty texts add no separator.
 - Keep speech accumulation local to each agent's current round. Pass the full vision result to the fairy and return the full fairy result; ordinary assistant text is not part of either result.
@@ -164,7 +164,7 @@ CONTENT
 - From `REPO-ROOT/FatFish`, run `& "$PWD/../Release/.github/Scripts/copilotBuild.ps1" -Configuration Debug -Platform x64`, followed by `& "$PWD/../Release/.github/Scripts/copilotExecute.ps1" -Mode UnitTest -Executable UnitTest -Configuration Debug -Platform x64`. Use the corresponding configuration and platform for the other builds.
 - Offline `UnitTest` verification must use synthetic model responses and temporary directories without reading real credentials, capturing the desktop, or making network requests. Cover memory safety, configuration validation, completion streaming, response formatting, error feedback, and multi-round agent execution.
 - Offline verification must cover multiple `speak` calls within one response and across follow-ups for both agents, complete vision-to-fairy forwarding, per-round result isolation, and an empty fairy `speak`.
-- For platform integration verification, run `UnitTest/PlatformSmoke/Invoke.ps1` in PowerShell 7 after building `FatFishCli`. This opt-in test captures the desktop and uses only a local loopback fixture.
+- For platform integration verification, run `REPO-ROOT/FatFish/UnitTest/Invoke.ps1` in PowerShell 7 after building `FatFishCli`. This opt-in test captures the desktop and uses only a local loopback fixture implemented by `Server.ps1` in the same folder.
 - Verification must include 10 consecutive successful `ENTER` rounds in `FatFishCli`, using the configured real models in one running process.
 - Each round must finish the vision agent followed by the fairy agent successfully. After all 10 rounds, press `ESC` and verify a clean exit.
 - If any round fails, fix the problem and restart the 10-round verification before reporting completion.

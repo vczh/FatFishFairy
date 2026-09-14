@@ -1,5 +1,5 @@
-#include "../Agents/Platform.h"
-#include "../Agents/Json.h"
+#include "../../Agents/Platform.h"
+#include "../../Agents/Json.h"
 #include <VlppOS.Windows.h>
 
 using namespace fatfish;
