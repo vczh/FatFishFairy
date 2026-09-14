@@ -10,11 +10,22 @@ The goal of this project is to create a desktop fairy with realtime response to 
 
 This application is Windows only, no need to worry about cross platform stuff.
 
+Note that agent expects a OpenAI v1 chat completion protocol, it could use any official or self-hosted LLM that supports it.
+
 ## Maintenance
 
 At the end of any coding task, update AGENTS.md and README.md to fix stale fact or add important information, commit and push local changes to the main branch, rebase if conflict.
 
+DO NOT maintain README.md as the Chinese translation of AGENTS.md. Instead it should only has the following topic:
+- How to prepare, build and test this repo.
+- How to use `FatFishCli` and `FatFishFairy` and what do they do from user's perspective.
+Maintain README_EN.md as the English translation of README.md and leave the `中文 | English` link in both of them for easy switching.
+
 If the source code is not touched in a request, you are not required to run the verification.
+If `Agents` folder is changed, you need to run full verification as well as `FatFishFairy`, otherwise only run verification on test apps that is affected in:
+- `UnitTest`
+- `FatFishCli`
+- `FatFishFairy`
 
 ## Supported Tools
 
