@@ -123,6 +123,7 @@ In `REPO-ROOT/env` these files are submitted to agents accordingly, in each requ
 
 ## Building
 
+- The build helper requires `VLPP_VSDEVCMD_PATH` to point to the installed Visual Studio / Build Tools `VsDevCmd.bat`. Run it from the folder containing the target solution (`FatFish` for this app, `Release/Tools/Executables` when bootstrapping resource tools).
 - There are already powershell scripts from the `Release` submodule to build and debug any vcxproj project, you are recommended to use them.
 - If they must be modified, copy them to this repo, do not update `Release` for such reasons.
 
