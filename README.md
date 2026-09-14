@@ -60,3 +60,7 @@ Vision (speak)>
 HTTP/HTTPS 网页 GET 使用 Vlpp 的 `HttpClientApi`。带认证的模型 POST 使用 WinHTTP，因为现有封装没有禁止转发自定义认证头的重定向选项。模型请求不跟随重定向；应配置最终服务地址。全显示器捕获使用 Windows GDI/WIC，无需启动 GacUI 窗口。协议参考 [Chat Completions API](https://developers.openai.com/api/reference/resources/chat)。
 
 `FatFishFairy` 项目目前是预留项目，桌面精灵窗口不在本阶段范围内。
+
+主题图片保存在 `themes`：`theme.json` 将文件夹名映射到中文主题名，每个主题的 `index.json` 将动画名映射到帧数，`reference.png` 保留原始角色参考图。更新任务见 [themes/job.updateThemes.prompt.md](themes/job.updateThemes.prompt.md)。现有 `loli_maid`（萝莉小妹抖）包含 3 帧 `coffee` 动画：跪坐在矮桌旁捧起手冲咖啡、轻啜一口、闭眼微笑，文件依次为 `coffee_1.png` 至 `coffee_3.png`。
+
+每个动画由 3–5 张 192×192 RGBA PNG 组成。角色与道具共用一片连通的白色贴纸底，周围保留约 8 像素白边，最外层为 1 像素 `#E0E0E0` 浅灰边，外部完全透明；同一动画保持尺寸、位置和外轮廓一致。文字使用蓝色中文，数字、颜文字和 `Zzz` 等符号除外。后续桌面窗口应以每秒一帧播放当前主题中随机选出的动画，结束后重新随机选择，并在每次启动时使用新的随机种子；当前仅提供主题资源，尚未实现播放器。

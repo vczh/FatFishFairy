@@ -83,6 +83,7 @@ In `REPO-ROOT/env` these files are submitted to agents accordingly, in each requ
 
 - `env`: files to be loaded.
 - `memory`: the folder for agents to maintain their memory.
+- `themes`: desktop fairy artwork; `theme.json` maps theme folder names to Chinese display names, and each theme's `index.json` maps animation names to frame counts. Keep the supplied `reference.png` as the character reference.
 - `Release`: the submodule to `https://vczh-libraries/Release`.
 - `Agents`: shared feature source files only; no test cases, fixtures, or test runners.
 - `FatFish`:
@@ -172,6 +173,10 @@ CONTENT
 ## FatFishFairy
 
 (non goal for now)
+
+Theme assets are maintained separately from the future desktop window. Follow `themes/job.updateThemes.prompt.md` and mark an animation complete only after its files and metadata are verified. `themes/loli_maid` currently contains the three-frame `coffee` animation. Frames use contiguous `<animation>_1.png` names, are 192×192 RGBA PNGs, and have a single connected white sticker backing with about 8 pixels of padding, a one-pixel `#E0E0E0` outer edge, and fully transparent exterior. Keep scale, placement and sticker silhouette consistent across an animation. Preserve existing character references when adding animations.
+
+The future player should select an animation randomly within the current theme, show one frame per second, and select again after the last frame. Seed its random generator afresh on each process start; playback is not implemented by the asset update job.
 
 ## Important Learning
 
