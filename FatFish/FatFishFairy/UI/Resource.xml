@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Resource>
+  <Folder name="GacGenConfig">
+    <Xml name="Metadata">
+      <ResourceMetadata Name="FatFishUI" Version="1.0" />
+    </Xml>
+    <Folder name="Cpp">
+      <Text name="SourceFolder">Source</Text>
+      <Text name="CppCompressed">FatFishUIResource.cpp</Text>
+      <Text name="NormalInclude">GacUI.h</Text>
+      <Text name="Name">FatFishUI</Text>
+    </Folder>
+  </Folder>
+  <Instance name="FairyWindowTemplateResource">
+    <Instance ref.CodeBehind="false" ref.Class="fatfish::ui::FairyWindowTemplate">
+      <WindowTemplate
+        CustomFrameEnabled="true"
+        CustomFramePadding="left:0 top:0 right:0 bottom:0"
+        MaximizedBoxOption="AlwaysFalse"
+        MinimizedBoxOption="AlwaysFalse"
+        BorderOption="AlwaysFalse"
+        SizeBoxOption="AlwaysFalse"
+        IconVisibleOption="AlwaysFalse"
+        TitleBarOption="AlwaysFalse">
+        <SolidBackground Color="#00FF00" />
+      </WindowTemplate>
+    </Instance>
+  </Instance>
+  <Instance name="FairyWindowResource">
+    <Instance ref.CodeBehind="false" ref.Class="fatfish::ui::FairyWindow">
+      <Window
+        Text="FatFishFairy"
+        ClientSize="x:384 y:384"
+        ControlTemplate="fatfish::ui::FairyWindowTemplate">
+        <Bounds ref.Name="fairyCanvas" AlignmentToParent="left:0 top:0 right:0 bottom:0">
+          <ImageFrame ref.Name="fairyImage" Stretch="true" />
+        </Bounds>
+      </Window>
+    </Instance>
+  </Instance>
+</Resource>

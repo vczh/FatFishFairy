@@ -4,5 +4,30 @@
     <Filter Include="Source Files"><Extensions>cpp;c;cc;cxx;h;hpp;hxx;inl</Extensions></Filter>
     <Filter Include="Header Files"><Extensions>h;hpp;hxx;inl</Extensions></Filter>
     <Filter Include="Resource Files"><Extensions>rc;ico;bmp;png</Extensions></Filter>
+    <Filter Include="GacUI" />
+    <Filter Include="Generated UI" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="Main.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="..\..\Release\Import\GacUI.cpp"><Filter>GacUI</Filter></ClCompile>
+    <ClCompile Include="..\..\Release\Import\GacUI.Windows.cpp"><Filter>GacUI</Filter></ClCompile>
+    <ClCompile Include="..\..\Release\Import\VlppWorkflowLibrary.cpp"><Filter>GacUI</Filter></ClCompile>
+    <ClCompile Include="..\..\Release\Import\Skins\DarkSkin\DarkSkin.cpp"><Filter>GacUI</Filter></ClCompile>
+    <ClCompile Include="UI\Source\FatFishUIPartialClasses.cpp"><Filter>Generated UI</Filter></ClCompile>
+    <ClCompile Include="UI\Source\FatFishUIReflection.cpp"><Filter>Generated UI</Filter></ClCompile>
+    <ClCompile Include="UI\Source\FatFishUIResource.cpp"><Filter>Generated UI</Filter></ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\..\Release\Import\GacUI.h"><Filter>GacUI</Filter></ClInclude>
+    <ClInclude Include="..\..\Release\Import\GacUI.Windows.h"><Filter>GacUI</Filter></ClInclude>
+    <ClInclude Include="..\..\Release\Import\VlppWorkflowLibrary.h"><Filter>GacUI</Filter></ClInclude>
+    <ClInclude Include="..\..\Release\Import\Skins\DarkSkin\DarkSkin.h"><Filter>GacUI</Filter></ClInclude>
+    <ClInclude Include="UI\Source\FatFishUI.h"><Filter>Generated UI</Filter></ClInclude>
+    <ClInclude Include="UI\Source\FatFishUIPartialClasses.h"><Filter>Generated UI</Filter></ClInclude>
+    <ClInclude Include="UI\Source\FatFishUIReflection.h"><Filter>Generated UI</Filter></ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <Xml Include="UI\GacUI.xml"><Filter>Resource Files</Filter></Xml>
+    <Xml Include="UI\Resource.xml"><Filter>Resource Files</Filter></Xml>
   </ItemGroup>
 </Project>

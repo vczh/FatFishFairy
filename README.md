@@ -1,9 +1,9 @@
 # FatFishFairy
 蓝色大肥鱼具身智能（不是
 
-Windows C++20 桌面精灵原型。`FatFishCli` 按 ENTER 截取所有显示器，先由独立的视觉模型描述屏幕，再由保留会话的精灵模型维护记忆并回应；按 ESC 退出。模型请求顺序执行，每次按键运行一轮。
+Windows C++20 桌面精灵。`FatFishFairy` 显示置顶透明角色窗口，支持拖动、位置记忆和主题动画；桌面窗口暂不执行模型请求。`FatFishCli` 按 ENTER 截取所有显示器，先由独立的视觉模型描述屏幕，再由保留会话的精灵模型维护记忆并回应；按 ESC 退出。模型请求顺序执行，每次按键运行一轮。
 
-首次准备：
+首次准备（`apikey.json` 仅 CLI 模型功能需要）：
 
 ```powershell
 git submodule update --init --recursive
@@ -12,17 +12,27 @@ Copy-Item env/apikey-template.json env/apikey.json
 
 编辑 `env/apikey.json` 中的 `apikey`、`url`、`auth_header`、`vision_model` 和 `fairy_model`。旧模板的 `chat_model` 仍可作为 `fairy_model` 的别名；同时填写时值必须相同。`url` 支持 API 基址（例如 `https://your-server/v1`）或完整的 `/chat/completions` 地址；查询模型列表的 `/models` 地址不能用作基址。`auth_header` 中的 `$APIKEY` 会替换为密钥。两个角色分别选择模型并管理独立会话，也可将两个配置项指向同一模型 ID；服务器需兼容 Chat Completions、图像输入和函数工具调用。该配置已被 Git 忽略；不要提交密钥。
 
-构建需要 Visual Studio / Build Tools 的 v145 工具集和最新 Windows 10 SDK。打开 `FatFish/FatFish.sln`，或在仓库根目录运行：
+构建需要 Visual Studio / Build Tools 的 v145 工具集和最新 Windows 10 SDK。桌面项目会在编译前运行 GacUI 资源编译器；如果 `Release/Tools/GacGen.exe` 或 `CppMerge.exe` 缺失，先在仓库根目录构建并复制工具：
+
+```powershell
+Push-Location Release/Tools/Executables
+& "$PWD/../../.github/Scripts/copilotBuild.ps1" -Configuration Release -Platform x64
+Copy-Item ./x64/Release/GacGen.exe, ./x64/Release/CppMerge.exe ../
+Pop-Location
+```
+
+然后打开 `FatFish/FatFish.sln`，或在仓库根目录运行：
 
 ```powershell
 Set-Location FatFish
 & "$PWD/../Release/.github/Scripts/copilotBuild.ps1" -Configuration Debug -Platform x64
 ```
 
-产物为 `FatFish/x64/Debug/FatFishCli.exe`（Win32 产物位于 `FatFish/Debug`）。支持 Debug/Release × Win32/x64；Debug 启用内存泄漏检查。
+产物为 `FatFish/x64/Debug/FatFishFairy.exe` 和 `FatFishCli.exe`（Win32 产物位于 `FatFish/Debug`）。支持 Debug/Release × Win32/x64；Debug 启用内存泄漏检查。
 
 ```powershell
 # 从仓库根目录启动；env 和 memory 的定位使用可执行文件路径，不依赖工作目录。
+& ./FatFish/x64/Debug/FatFishFairy.exe
 & ./FatFish/x64/Debug/FatFishCli.exe
 & ./FatFish/x64/Debug/FatFishCli.exe --once
 ```
@@ -42,7 +52,7 @@ Set-Location FatFish
 
 构建后，在仓库根目录的 PowerShell 7 中运行 `& "$PWD/FatFish/UnitTest/Invoke.ps1" -Configuration Debug -Platform x64` 可验证实际截图、PNG 编码、HTTP 请求和记忆写入。入口脚本 `Invoke.ps1` 与本机回环测试服务器 `Server.ps1` 均直接位于 `FatFish/UnitTest`。此测试将截图仅发送到本机回环测试服务器，在内存中解码，不保存图片、不连接真实模型服务；结束后还原调试参数并删除临时目录。
 
-`Agents` 静态库包含全部代理、工具、配置和截图逻辑；CLI 负责参数、按键、输出和目录定位。CLI 先读取自身可执行文件的完整路径，再用 `vl::filesystem::FilePath` 计算 `env` 和 `memory`，作为两个独立路径传给 `FairyApplication`；`Agents` 不查找仓库根目录，也不假设两个目录的名称或相对位置。按当前构建布局，x64 从可执行文件所在目录使用 `../../../env` 和 `../../../memory`，Win32 使用 `../../env` 和 `../../memory`，Debug 与 Release 相同。`--repo-root` 在 CLI 中覆盖根目录，未来 `FatFishFairy` 也遵循同样的目录传入设计。每轮包含全部显示器的 PNG 图像、坐标和尺寸，支持负坐标与混合 DPI。图像只在内存中处理并发送给配置的模型服务器；精灵只接收视觉描述。`env` 的中文工具说明、记忆指引和角色请求随每次模型提交发送，精灵额外接收原有的 `Character.md`。
+`Agents` 静态库包含全部代理、工具、配置和截图逻辑；CLI 负责参数、按键、输出和目录定位。CLI 先读取自身可执行文件的完整路径，再用 `vl::filesystem::FilePath` 计算 `env` 和 `memory`，作为两个独立路径传给 `FairyApplication`；`Agents` 不查找仓库根目录，也不假设两个目录的名称或相对位置。按当前构建布局，x64 从可执行文件所在目录使用 `../../../env` 和 `../../../memory`，Win32 使用 `../../env` 和 `../../memory`，Debug 与 Release 相同。`--repo-root` 在 CLI 中覆盖根目录，`FatFishFairy` 已使用同样的目录计算方式，当前只加载桌面配置与主题。每轮包含全部显示器的 PNG 图像、坐标和尺寸，支持负坐标与混合 DPI。图像只在内存中处理并发送给配置的模型服务器；精灵只接收视觉描述。`env` 的中文工具说明、记忆指引和角色请求随每次模型提交发送，精灵额外接收原有的 `Character.md`。
 
 CLI 在每条回复接收完整后，将双方的 `speak` 调用显示为下面的文本块，保留原文换行和引号；其他工具调用、普通文字和空的结束消息仍以 `Vision> JSON` 或 `Fairy> JSON` 显示。混合工具调用保留顺序，已显示的发言不再重复出现在 JSON 中；无法解析的 `speak` 参数保留为 JSON 以便诊断。不打印发送给代理的请求。
 
@@ -61,7 +71,15 @@ Vision (speak)>
 
 HTTP/HTTPS 网页 GET 使用 Vlpp 的 `HttpClientApi`。带认证的模型 POST 使用 WinHTTP，因为现有封装没有禁止转发自定义认证头的重定向选项。模型请求不跟随重定向；应配置最终服务地址。全显示器捕获使用 Windows GDI/WIC，无需启动 GacUI 窗口。协议参考 [Chat Completions API](https://developers.openai.com/api/reference/resources/chat)。
 
-`FatFishFairy` 项目目前是预留项目，桌面精灵窗口不在本阶段范围内。
+`FatFishFairy` 使用 GacUI 的普通 Windows Direct2D 渲染器。384×384 无边框窗口始终置顶，绿色背景通过 Windows 色键变为透明，保留 PNG 的角色与白色贴纸边缘。按住角色左键拖动，松开后保存位置；右键菜单中的“退出”关闭程序。
+
+桌面程序和 CLI 一样，先用 `GetModuleFileNameW` 得到自身完整路径，再用 `FilePath.GetFolder()` 和 `/` 定位目录：x64 从 `FatFish/x64/<Configuration>` 回到仓库根目录，Win32 从 `FatFish/<Configuration>` 回到根目录，然后得到 `env` 和 `themes`。启动不依赖当前工作目录，也不读取密钥或启动 `FairyApplication`。
+
+`env/config.json` 保存 `{"windowX":0,"windowY":0}`，允许其他显示器上的负坐标。文件或坐标缺失时默认为零，首次拖动后自动创建；保存保留其他配置字段。此文件已加入 Git 忽略列表。错误 JSON、非法坐标、缺失动画文件或尺寸不符的图片会明确报错。
+
+窗口模板定义在 `FatFish/FatFishFairy/UI/Resource.xml`。项目通过相邻的 `UI/GacUI.xml` 驱动文件运行 `Release/Tools/GacBuild.ps1`，生成 `UI/Source` 中的 C++ 文件；`CppCompressed` 将二进制资源嵌入 `FatFishUIResource.cpp`，无需部署独立 UI 资源文件。XML 和生成的 C++ 一起提交。
+
+`Agents/Desktop.h` 提供位置配置、主题目录读取和三遍播放顺序，GUI 只负责目录定位、图片解码、窗口和定时显示。新增离线用例覆盖配置校验、元数据和播放边界。PowerShell 7 中运行 `& "$PWD/FatFish/UnitTest/Invoke-Fairy.ps1" -Configuration Debug -Platform x64` 可检查实际窗口：它使用临时复制的可执行文件和主题，从其他工作目录启动，检查透明置顶、动画变化、拖动保存、重启恢复和菜单退出，不读取真实配置或密钥。
 
 主题图片保存在 `themes`：`theme.json` 将文件夹名映射到中文主题名，每个主题的 `index.json` 将动画名映射到独立帧数（不包含播放重复次数），`reference.png` 保留原始角色参考图。更新任务见 [themes/job.updateThemes.prompt.md](themes/job.updateThemes.prompt.md)，其中 `xN` 指定对应阶段的帧数。现有 `loli_maid`（萝莉小妹抖）包含 10 组动画，共 34 帧，文件按 `<动画名>_1.png` 起连续编号。
 
@@ -78,4 +96,4 @@ HTTP/HTTPS 网页 GET 使用 Vlpp 的 `HttpClientApi`。带认证的模型 POST 
 | `drawing` | 3 | 用电子画板绘制自己的草稿、描线、上色 |
 | `transformer` | 5 | 从女仆经过机械折叠、半鲸形、机械鲸鱼变为蓝色鲸鱼 |
 
-每个动画由 3–5 张 384×384 RGBA PNG 组成。角色与道具共用一片连通的白色贴纸底，周围保留约 8 像素白边，最外层为 1 像素 `#E0E0E0` 浅灰边，外部完全透明；同一动画保持构图尺寸与基准位置一致，普通动作共用稳定的外轮廓，变形动画的轮廓随形体变化。文字使用蓝色中文，数字、颜文字和 `Zzz` 等符号除外。后续桌面窗口应以每秒一帧播放当前主题中随机选出的动画系列，按帧顺序连续完整播放3遍（总共3遍），第3遍最后一帧结束后才随机选择下一个系列，并在每次启动时使用新的随机种子；当前仅提供主题资源，尚未实现播放器。
+每个动画由 3–5 张 384×384 RGBA PNG 组成。角色与道具共用一片连通的白色贴纸底，周围保留约 8 像素白边，最外层为 1 像素 `#E0E0E0` 浅灰边，外部完全透明；同一动画保持构图尺寸与基准位置一致，普通动作共用稳定的外轮廓，变形动画的轮廓随形体变化。文字使用蓝色中文，数字、颜文字和 `Zzz` 等符号除外。桌面窗口使用 `theme.json` 中的第一个主题，以每秒一帧播放随机选出的动画系列，按帧顺序连续完整播放3遍（总共3遍），第3遍最后一帧结束后才随机选择下一个系列，并在每次启动时使用新的随机种子。

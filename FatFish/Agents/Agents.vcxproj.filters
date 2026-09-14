@@ -14,6 +14,7 @@
     <ClCompile Include="..\..\Release\Import\VlppRegex.cpp"><Filter>Source Files\Vlpp</Filter></ClCompile>
     <ClCompile Include="..\..\Release\Import\VlppReflection.cpp"><Filter>Source Files\Vlpp</Filter></ClCompile>
     <ClCompile Include="..\..\Release\Import\VlppGlrParser.cpp"><Filter>Source Files\Vlpp</Filter></ClCompile>
+    <ClCompile Include="..\..\Agents\Desktop.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="..\..\Agents\Json.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="..\..\Agents\Output.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="..\..\Agents\Memory.cpp"><Filter>Source Files</Filter></ClCompile>
@@ -25,6 +26,7 @@
     <ClInclude Include="..\..\Release\Import\VlppRegex.h"><Filter>Source Files\Vlpp</Filter></ClInclude>
     <ClInclude Include="..\..\Release\Import\VlppReflection.h"><Filter>Source Files\Vlpp</Filter></ClInclude>
     <ClInclude Include="..\..\Release\Import\VlppGlrParser.h"><Filter>Source Files\Vlpp</Filter></ClInclude>
+    <ClInclude Include="..\..\Agents\Desktop.h"><Filter>Source Files</Filter></ClInclude>
     <ClInclude Include="..\..\Agents\Json.h"><Filter>Source Files</Filter></ClInclude>
     <ClInclude Include="..\..\Agents\Output.h"><Filter>Source Files</Filter></ClInclude>
     <ClInclude Include="..\..\Agents\Memory.h"><Filter>Source Files</Filter></ClInclude>

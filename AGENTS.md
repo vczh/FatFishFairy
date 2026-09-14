@@ -136,10 +136,11 @@ You are not recommended to modify this library, but if you really need to:
 
 ### Agents
 
-- `FatFishCli`, `FatFishFairy` or any other interactive test apps should only be a thin UI layer.
+- `FatFishCli`, `FatFishFairy` or any other interactive test apps should only be a thin UI layer. `Agents/Desktop.h` contains desktop position persistence, theme metadata loading and animation sequencing; the GUI owns native windows, image decoding and rendering.
 - `FatFishCli` and `FatFishFairy` own the locations of `env` and `memory`. Each app must first obtain its own executable's full path, then use `vl::filesystem::FilePath`, `GetFolder()` and `/` to calculate both folders and pass them as two separate `vl::filesystem::FilePath` arguments to `FairyApplication`.
 - Match `FatFish/Common.props`: executables are in `REPO-ROOT/FatFish/x64/<Configuration>` for x64 and `REPO-ROOT/FatFish/<Configuration>` for Win32. From `vl::filesystem::FilePath(executable).GetFolder()`, use `L"../../../env"` and `L"../../../memory"` for x64, or `L"../../env"` and `L"../../memory"` for Win32, in both Debug and Release. Update this calculation in both apps if the output layout changes.
 - Default folder resolution must depend on the executable location, not the working directory or an upward search for marker files. Any explicit path override (such as CLI `--repo-root PATH`) is also resolved by the UI before passing the two folders to `Agents`.
+- Until the desktop GUI executes agents, it only needs to resolve `env` and `themes` using the same executable-relative root calculation as the CLI. It must not instantiate `FairyApplication` or require `apikey.json` merely to display the fairy.
 - Code in `Agents` must not discover or store the repository root, inspect the executable path, or assume the supplied folders' names, locations or relationship. Load configuration and prompts directly from the supplied environment folder and initialize `MemoryStore` with the exact supplied memory folder. The constructor that injects configuration, prompts and I/O for offline tests only needs the supplied memory folder.
 - All source files about agents and other features should be in the `REPO-ROOT/Agents` folder.
 - Keep test cases and fixtures in `REPO-ROOT/FatFish/UnitTest`, compiled only by the `UnitTest` project. Keep all test PowerShell scripts directly in this folder. Do not expose test runners from feature headers or add a `--self-test` mode to `FatFishCli`.
@@ -169,13 +170,14 @@ CONTENT
 - Offline `UnitTest` verification must use synthetic model responses and temporary directories without reading real credentials, capturing the desktop, or making network requests. Cover memory safety, configuration validation, completion streaming, response formatting, error feedback, and multi-round agent execution.
 - Offline verification must cover multiple `speak` calls within one response and across follow-ups for both agents, complete vision-to-fairy forwarding, per-round result isolation, and an empty fairy `speak`.
 - For platform integration verification, run `REPO-ROOT/FatFish/UnitTest/Invoke.ps1` in PowerShell 7 after building `FatFishCli`. This opt-in test captures the desktop and uses only a local loopback fixture implemented by `Server.ps1` in the same folder.
+- For desktop-window integration, run `FatFish/UnitTest/Invoke-Fairy.ps1` in PowerShell 7. It uses a temporary executable/theme/config layout, verifies transparency, animation, dragging, persistence and menu exit, and never copies credentials. It moves the mouse during the test and restores the pointer afterwards.
 - Verification must include 10 consecutive successful `ENTER` rounds in `FatFishCli`, using the configured real models in one running process.
 - Each round must finish the vision agent followed by the fairy agent successfully. After all 10 rounds, press `ESC` and verify a clean exit.
 - If any round fails, fix the problem and restart the 10-round verification before reporting completion.
 
 ## FatFishFairy
 
-The application is based on GacUI, using `Release/Tools/GacBuild.ps1` to compile `FatFish/FatFishFairy/UI/Resource.xml` to `FatFish/FatFishFairy/UI/Source`, the `CppCompressed` options should be used to embed generated binary resources in `FatFishUIResource.cpp`. The application does not use hosted mode.
+The application is based on GacUI, using `Release/Tools/GacBuild.ps1` to compile `FatFish/FatFishFairy/UI/Resource.xml` to `FatFish/FatFishFairy/UI/Source`, the `CppCompressed` options embed generated binary resources in `FatFishUIResource.cpp`. The application uses the ordinary Windows Direct2D renderer, without hosted mode. The project invokes GacBuild through the adjacent `UI/GacUI.xml` driver before compiling; bootstrap the ignored `GacGen.exe` and `CppMerge.exe` as described in `Release/Tools/README.md` if missing. Keep generated C++ files committed with the XML.
 
 ### Main Window
 
@@ -195,10 +197,11 @@ Right click the main window shows a menu organized as below:
 ```JSON
 {
   "windowX": 0,
-  "windowY": 0,
+  "windowY": 0
 }
 ```
 This file defines the initial location of the main window. When stopping dragging the main window, this file should be updated to reflect the current location, therefore it is remembered and used at the next startup.
+`config.json` is ignored by Git. Missing files or missing coordinates default to zero; dragging creates the file and preserves unrelated settings. Coordinates are signed 32-bit desktop coordinates, including negative positions on other monitors. Malformed configuration and missing or invalid theme frames fail explicitly.
 
 ### Executing Agents
 
@@ -206,12 +209,15 @@ This file defines the initial location of the main window. When stopping draggin
 
 ### Playing Animation
 
-Theme assets are maintained separately from the future desktop window. Follow `themes/job.updateThemes.prompt.md` and mark an animation complete only after its files and metadata are verified. `themes/loli_maid` currently contains 10 animation series and 34 frames: `coffee`, `espresso`, `latte_art`, `homework`, `reading_manga`, `sleeping`, `playing`, `programming`, `drawing`, and `transformer`. `espresso` has five frames (two puck-preparation frames followed by three latte-making frames), and `transformer` has five transformation stages; all other series have three frames. Respect explicit `xN` stage counts in the prompt. Frames use contiguous `<animation>_1.png` names, are 384×384 RGBA PNGs, and have a single connected white sticker backing with about 8 pixels of padding, a one-pixel `#E0E0E0` outer edge, and fully transparent exterior. Keep scale and placement consistent across an animation; use a stable outline for ordinary actions and let transformation outlines follow the changing body shape. Preserve existing character references and completed animations when adding series. `index.json` stores distinct frame counts, not playback repetition counts.
+Theme assets are maintained separately from the desktop window implementation. Follow `themes/job.updateThemes.prompt.md` and mark an animation complete only after its files and metadata are verified. `themes/loli_maid` currently contains 10 animation series and 34 frames: `coffee`, `espresso`, `latte_art`, `homework`, `reading_manga`, `sleeping`, `playing`, `programming`, `drawing`, and `transformer`. `espresso` has five frames (two puck-preparation frames followed by three latte-making frames), and `transformer` has five transformation stages; all other series have three frames. Respect explicit `xN` stage counts in the prompt. Frames use contiguous `<animation>_1.png` names, are 384×384 RGBA PNGs, and have a single connected white sticker backing with about 8 pixels of padding, a one-pixel `#E0E0E0` outer edge, and fully transparent exterior. Keep scale and placement consistent across an animation; use a stable outline for ordinary actions and let transformation outlines follow the changing body shape. Preserve existing character references and completed animations when adding series. `index.json` stores distinct frame counts, not playback repetition counts.
 
-The future player should select an animation series randomly within the current theme, show one frame per second, and play its complete frame sequence three consecutive times in total. Select the next series randomly only after the last frame of the third playthrough. Seed its random generator afresh on each process start; playback is not implemented by the asset update job.
+The desktop player uses the first theme in `themes/theme.json`, selects an animation series randomly within that theme, shows one frame per second, and plays its complete frame sequence three consecutive times in total. It selects the next series randomly only after the last frame of the third playthrough, and seeds its random generator afresh on each process start. `index.json` defines the distinct frame count. Playback is implemented by `Agents/Desktop.cpp` and the GUI timer, separately from the asset update job.
 
 ## Important Learning
 
 <!--
 You can write anything in this section during development to make future works more efficient.
 -->
+
+- Current GacUI composition input uses `mouseDown`/`mouseUp` plus `GuiMouseEventArgs::button`. In custom-frame mode, sending `WM_NCLBUTTONDOWN` to the window routes back to `mouseDown`; use `DefWindowProcW` directly when initiating a native caption drag to avoid recursive event dispatch.
+- Use an adjacent `GacUI.xml` driver for GacBuild. Passing the resource itself as its driver makes its resource compiler replace the same `.log` folder that contains GacBuild's enumeration files.

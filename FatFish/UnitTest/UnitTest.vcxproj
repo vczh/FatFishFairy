@@ -39,11 +39,13 @@
   <ItemGroup>
     <ClCompile Include="Main.cpp" />
     <ClCompile Include="CompletionStreamTests.cpp" />
+    <ClCompile Include="DesktopTests.cpp" />
     <ClCompile Include="MemoryTests.cpp" />
     <ClCompile Include="OutputTests.cpp" />
     <ClCompile Include="PlatformTests.cpp" />
     <ClCompile Include="RuntimeTests.cpp" />
     <None Include="Invoke.ps1" />
+    <None Include="Invoke-Fairy.ps1" />
     <None Include="Server.ps1" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

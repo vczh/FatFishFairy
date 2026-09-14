@@ -15,7 +15,7 @@
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Label="Configuration">
-    <ConfigurationType>Utility</ConfigurationType>
+    <ConfigurationType>Application</ConfigurationType>
     <PlatformToolset>v145</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
     <PreferredToolArchitecture>x64</PreferredToolArchitecture>
@@ -30,6 +30,50 @@
     <Import Project="..\Common.props" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
+  <ItemDefinitionGroup>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Agents\Agents.vcxproj">
+      <Project>{099019C1-F655-47F8-A6AA-28EC51F6803C}</Project>
+      <UseLibraryDependencyInputs>true</UseLibraryDependencyInputs>
+    </ProjectReference>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="Main.cpp" />
+    <ClCompile Include="..\..\Release\Import\GacUI.cpp">
+      <AdditionalOptions>/bigobj %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <ClCompile Include="..\..\Release\Import\GacUI.Windows.cpp" />
+    <ClCompile Include="..\..\Release\Import\VlppWorkflowLibrary.cpp" />
+    <ClCompile Include="..\..\Release\Import\Skins\DarkSkin\DarkSkin.cpp">
+      <AdditionalOptions>/bigobj %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <ClCompile Include="UI\Source\FatFishUIPartialClasses.cpp" />
+    <ClCompile Include="UI\Source\FatFishUIReflection.cpp" />
+    <ClCompile Include="UI\Source\FatFishUIResource.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\..\Release\Import\GacUI.h" />
+    <ClInclude Include="..\..\Release\Import\GacUI.Windows.h" />
+    <ClInclude Include="..\..\Release\Import\VlppWorkflowLibrary.h" />
+    <ClInclude Include="..\..\Release\Import\Skins\DarkSkin\DarkSkin.h" />
+    <ClInclude Include="UI\Source\FatFishUI.h" />
+    <ClInclude Include="UI\Source\FatFishUIPartialClasses.h" />
+    <ClInclude Include="UI\Source\FatFishUIReflection.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <Xml Include="UI\GacUI.xml" />
+    <Xml Include="UI\Resource.xml" />
+  </ItemGroup>
+  <Target Name="GenerateFatFishUI" BeforeTargets="ClCompile">
+    <Error Condition="!Exists('$(ProjectDir)..\..\Release\Tools\GacGen.exe') Or !Exists('$(ProjectDir)..\..\Release\Tools\CppMerge.exe')" Text="Build the Release tools first; see Release/Tools/README.md." />
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -Command &quot;&amp; '$(ProjectDir)..\..\Release\Tools\GacBuild.ps1' -FileName '$(ProjectDir)UI\GacUI.xml'&quot;" />
+    <Error Condition="Exists('$(ProjectDir)UI\Resource.xml.log\x32\Errors.txt') Or Exists('$(ProjectDir)UI\Resource.xml.log\x64\Errors.txt')" Text="GacUI resource generation failed. See UI/Resource.xml.log for compiler errors." />
+    <Error Condition="!Exists('$(ProjectDir)UI\Resource.xml.log\x32\ScriptedResource.bin') Or !Exists('$(ProjectDir)UI\Resource.xml.log\x64\ScriptedResource.bin') Or !Exists('$(ProjectDir)UI\Source\FatFishUIResource.cpp') Or !Exists('$(ProjectDir)UI\Source\FatFishUIPartialClasses.cpp')" Text="GacUI resource generation did not produce the expected outputs." />
+  </Target>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />
 </Project>
