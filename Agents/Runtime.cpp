@@ -118,6 +118,8 @@ namespace fatfish
 			else if (name == L"speak")
 			{
 				auto text = GetString(args, L"text");
+				// Both prompts request one speak, but retain all speech if a model calls it again.
+				// Empty speech is valid for a silent fairy and must not add separator-only output.
 				if (text.Length() > 0)
 				{
 					if (spoken.Length() > 0) spoken += L"\n";

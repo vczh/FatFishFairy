@@ -40,6 +40,8 @@ namespace fatfish
 		                                                    vl::Func<vl::WString(const vl::WString&)> completion,
 		                                                    vl::Func<void(vl::collections::List<MonitorSnapshot>&)> snapshots,
 		                                                    vl::Func<WebResponse(const vl::WString&)> httpGet);
+		// Join each agent's nonempty speak texts in order with newlines, across all tool replies.
+		// Forward the complete vision result to the fairy and return the complete fairy result.
 		vl::WString                                     RunRound();
 		static vl::filesystem::FilePath                  FindRepositoryRoot();
 	};
