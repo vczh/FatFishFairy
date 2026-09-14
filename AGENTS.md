@@ -189,7 +189,7 @@ The background should be #00FF00 so that when a png renders on it, the backgroun
 ### Behavior
 
 The main window is always top-most.
-Dragging the main window using left button moves the window.
+Dragging the main window using left button moves the window. Remember the local cursor position on left `mouseDown`; on `mouseMove`, move the current native bounds by the converted difference from that fixed anchor. GacUI handles capture automatically. Save the position on left `mouseUp`; do not initiate native caption dragging or manage capture manually.
 Right click the main window shows a menu organized as below:
 - `退出`: Exit the application.
 
@@ -223,5 +223,5 @@ The desktop player uses the first theme in `themes/theme.json`, selects an anima
 You can write anything in this section during development to make future works more efficient.
 -->
 
-- Current GacUI composition input uses `mouseDown`/`mouseUp` plus `GuiMouseEventArgs::button`. In custom-frame mode, sending `WM_NCLBUTTONDOWN` to the window routes back to `mouseDown`; use `DefWindowProcW` directly when initiating a native caption drag to avoid recursive event dispatch.
+- Current GacUI composition input uses `mouseDown`/`mouseUp` plus `GuiMouseEventArgs::button`, and `mouseMove` plus `arguments.left`. Event coordinates are GUI units; convert movement deltas with `INativeWindow::Convert` before updating native bounds. Keep the mouse-down anchor unchanged because moving the window updates the cursor's relative position.
 - Use an adjacent `GacUI.xml` driver for GacBuild. Passing the resource itself as its driver makes its resource compiler replace the same `.log` folder that contains GacBuild's enumeration files.

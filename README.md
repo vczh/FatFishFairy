@@ -73,6 +73,8 @@ HTTP/HTTPS 网页 GET 使用 Vlpp 的 `HttpClientApi`。带认证的模型 POST 
 
 `FatFishFairy` 使用 GacUI 的普通 Windows Direct2D 渲染器。384×384 无边框窗口始终置顶，绿色背景通过 Windows 色键变为透明，保留 PNG 的角色与白色贴纸边缘。按住角色左键拖动，松开后保存位置；右键菜单中的“退出”关闭程序。
 
+拖动直接使用 GacUI 的鼠标事件：左键按下时记录窗口内坐标，移动时按当前坐标与固定起点的差值调整窗口位置，左键松开时保存。坐标差值先转换为原生屏幕单位，鼠标捕获由 GacUI 自动处理。
+
 桌面程序和 CLI 一样，先用 `GetModuleFileNameW` 得到自身完整路径，再用 `FilePath.GetFolder()` 和 `/` 定位目录：x64 从 `FatFish/x64/<Configuration>` 回到仓库根目录，Win32 从 `FatFish/<Configuration>` 回到根目录，然后得到 `env` 和 `themes`。启动不依赖当前工作目录，也不读取密钥或启动 `FairyApplication`。
 
 `env/config.json` 保存 `{"windowX":0,"windowY":0}`，允许其他显示器上的负坐标。文件或坐标缺失时默认为零，首次拖动后自动创建；保存保留其他配置字段。此文件已加入 Git 忽略列表。错误 JSON、非法坐标、缺失动画文件或尺寸不符的图片会明确报错。

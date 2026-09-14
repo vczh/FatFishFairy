@@ -35,27 +35,46 @@ private:
 	FilePath                                envFolder;
 	ThemePlayback                           playback;
 	Dictionary<WString, Ptr<INativeImage>>   images;
+	Nullable<Point>                         dragStart;
 	vuint64_t                               lastFrameTime = 0;
 
 	void OnLeftButtonDown(GuiGraphicsComposition* sender, GuiMouseEventArgs& arguments)
 	{
 		if (arguments.button != NativeMouseButton::Left) return;
 		arguments.handled = true;
-		// Hand dragging to Windows so capture and mixed-DPI monitor transitions work normally.
-		auto nativeWindow = GetNativeWindow();
-		auto hwnd = GetWindowsForm(nativeWindow)->GetWindowHandle();
-		nativeWindow->ReleaseCapture();
-		// GacUI routes nonclient clicks back to mouseDown in custom-frame mode.
-		DefWindowProcW(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, GetMessagePos());
-		auto bounds = nativeWindow->GetBounds();
-		SaveDesktopPosition(envFolder, { bounds.x1.value, bounds.y1.value });
+		dragStart = Point(arguments.x, arguments.y);
 	}
 
-	void OnRightButtonUp(GuiGraphicsComposition* sender, GuiMouseEventArgs& arguments)
+	void OnMouseMove(GuiGraphicsComposition* sender, GuiMouseEventArgs& arguments)
 	{
-		if (arguments.button != NativeMouseButton::Right) return;
+		if (!arguments.left)
+		{
+			dragStart.Reset();
+			return;
+		}
+		if (!dragStart) return;
 		arguments.handled = true;
-		contextMenu->ShowPopup(this, Point(arguments.x, arguments.y));
+		auto nativeWindow = GetNativeWindow();
+		auto bounds = nativeWindow->GetBounds();
+		// Moving the window resets the relative cursor position, so keep the original anchor.
+		bounds.Move(nativeWindow->Convert(Size(arguments.x - dragStart.Value().x, arguments.y - dragStart.Value().y)));
+		nativeWindow->SetBounds(bounds);
+	}
+
+	void OnMouseUp(GuiGraphicsComposition* sender, GuiMouseEventArgs& arguments)
+	{
+		if (arguments.button == NativeMouseButton::Left && dragStart)
+		{
+			arguments.handled = true;
+			dragStart.Reset();
+			auto bounds = GetNativeWindow()->GetBounds();
+			SaveDesktopPosition(envFolder, { bounds.x1.value, bounds.y1.value });
+		}
+		else if (arguments.button == NativeMouseButton::Right)
+		{
+			arguments.handled = true;
+			contextMenu->ShowPopup(this, Point(arguments.x, arguments.y));
+		}
 	}
 
 public:
@@ -92,7 +111,8 @@ public:
 
 		auto events = GetBoundsComposition()->GetEventReceiver();
 		events->mouseDown.AttachMethod(this, &FairyDesktopWindow::OnLeftButtonDown);
-		events->mouseUp.AttachMethod(this, &FairyDesktopWindow::OnRightButtonUp);
+		events->mouseMove.AttachMethod(this, &FairyDesktopWindow::OnMouseMove);
+		events->mouseUp.AttachMethod(this, &FairyDesktopWindow::OnMouseUp);
 		AddAnimation(IGuiAnimation::CreateAnimation([this](vuint64_t milliseconds)
 		{
 			if (milliseconds - lastFrameTime >= 1000)
