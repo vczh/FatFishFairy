@@ -1,3 +1,12 @@
 {
-  "coffee": 3
+  "coffee": 3,
+  "espresso": 5,
+  "latte_art": 3,
+  "homework": 3,
+  "reading_manga": 3,
+  "sleeping": 3,
+  "playing": 3,
+  "programming": 3,
+  "drawing": 3,
+  "transformer": 5
 }

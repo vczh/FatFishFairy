@@ -26,12 +26,12 @@ FatFishFairy会随机选择当前主题的一个动画系列，每1秒一帧，�
 参考形象为DeepSeek蓝色大肥鱼的大头萝莉女仆，身穿女仆装，衣服上有有DeepSeek logo，自带鲸鱼尾巴，所有的内容都应该是可爱Q版。
 
 - [x] coffee: 跪坐在桌子旁边喝手冲咖啡。
-- [ ] espresso: puck prep x2 -> 使用decent espresso浓缩咖啡机制作拿铁 x3。
-- [ ] latte_art: 拿铁拉花。
-- [ ] homework: 做作业。
-- [ ] reading_manga: 躺在沙发上看漫画。
-- [ ] sleeping: 趴在地上睡觉。
-- [ ] playing: 坐在地上玩玩具飞机。
-- [ ] programming: 坐着人体工学椅子在书桌前面编程。
-- [ ] drawing: 使用电子画板在电脑前绘制蓝色大肥鱼自己。
-- [ ] transformer: 像变形金刚一样变成一条蓝色鲸鱼x5。
+- [x] espresso: puck prep x2 -> 使用decent espresso浓缩咖啡机制作拿铁 x3。
+- [x] latte_art: 拿铁拉花。
+- [x] homework: 做作业。
+- [x] reading_manga: 躺在沙发上看漫画。
+- [x] sleeping: 趴在地上睡觉。
+- [x] playing: 坐在地上玩玩具飞机。
+- [x] programming: 坐着人体工学椅子在书桌前面编程。
+- [x] drawing: 使用电子画板在电脑前绘制蓝色大肥鱼自己。
+- [x] transformer: 像变形金刚一样变成一条蓝色鲸鱼x5。
