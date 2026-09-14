@@ -1,5 +1,7 @@
 # FatFishFairy
 
+蓝色大肥鱼具身智能（不是 <!-- keep this line -->
+
 [中文](README.md) | [English](README_EN.md)
 
 Windows 桌面精灵，提供两个程序：
