@@ -130,6 +130,10 @@ You are not recommended to modify this library, but if you really need to:
 ### Agents
 
 - `FatFishCli`, `FatFishFairy` or any other interactive test apps should only be a thin UI layer.
+- `FatFishCli` and `FatFishFairy` own the locations of `env` and `memory`. Each app must first obtain its own executable's full path, then use `vl::filesystem::FilePath`, `GetFolder()` and `/` to calculate both folders and pass them as two separate `vl::filesystem::FilePath` arguments to `FairyApplication`.
+- Match `FatFish/Common.props`: executables are in `REPO-ROOT/FatFish/x64/<Configuration>` for x64 and `REPO-ROOT/FatFish/<Configuration>` for Win32. From `vl::filesystem::FilePath(executable).GetFolder()`, use `L"../../../env"` and `L"../../../memory"` for x64, or `L"../../env"` and `L"../../memory"` for Win32, in both Debug and Release. Update this calculation in both apps if the output layout changes.
+- Default folder resolution must depend on the executable location, not the working directory or an upward search for marker files. Any explicit path override (such as CLI `--repo-root PATH`) is also resolved by the UI before passing the two folders to `Agents`.
+- Code in `Agents` must not discover or store the repository root, inspect the executable path, or assume the supplied folders' names, locations or relationship. Load configuration and prompts directly from the supplied environment folder and initialize `MemoryStore` with the exact supplied memory folder. The constructor that injects configuration, prompts and I/O for offline tests only needs the supplied memory folder.
 - All source files about agents and other features should be in the `REPO-ROOT/Agents` folder.
 - Keep test cases and fixtures in `REPO-ROOT/UnitTest`, compiled only by the `UnitTest` project. Do not expose test runners from feature headers or add a `--self-test` mode to `FatFishCli`.
 - Prompts must require both the vision agent and the fairy agent to call `speak` exactly once per observation request, including all tool-feedback follow-ups. Vision submits its complete nonempty observation; fairy uses an empty `text` when it has nothing to say.

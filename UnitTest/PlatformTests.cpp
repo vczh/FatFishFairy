@@ -44,10 +44,10 @@ TEST_FILE
 		auto prefix = FilePath(tempFolder).GetFullPath() + WString::FromChar(FilePath::GetPathDelimiter());
 		TEST_ASSERT(root.GetFullPath().Length() > prefix.Length()
 			&& Locale::Invariant().CompareOrdinalIgnoreCase(root.GetFullPath().Left(prefix.Length()), prefix) == 0); // Keep the fixture under the system temporary directory.
-		TEST_ASSERT(File(root).Delete() && Folder(root / L"env").Create(true)); // Create the fixture directory.
-		File configFile(root / L"env" / L"apikey.json");
+		TEST_ASSERT(File(root).Delete() && Folder(root / L"custom-prompts").Create(true)); // Create the fixture directory.
+		File configFile(root / L"custom-prompts" / L"apikey.json");
 		json::Parser parser;
-		ExpectPlatformFailure([&] { LoadApiConfig(root, parser); });
+		ExpectPlatformFailure([&] { LoadApiConfig(root / L"custom-prompts", parser); });
 		auto fixture = Ptr(new json::JsonObject);
 		SetString(fixture, L"apikey", L"test-secret");
 		SetString(fixture, L"url", L"https://example.test/v1");
@@ -59,44 +59,44 @@ TEST_FILE
 			TEST_ASSERT(configFile.WriteAllText(json::JsonToString(fixture), false, stream::BomEncoder::Utf8)); // Save synthetic UTF-8 configuration.
 		};
 		save();
-		auto config = LoadApiConfig(root, parser);
+		auto config = LoadApiConfig(root / L"custom-prompts", parser);
 		TEST_ASSERT(config.apiKey == L"test-secret" && config.url == L"https://example.test/v1/chat/completions"
 			&& config.visionModel == L"vision-test" && config.fairyModel == L"fairy-test"); // Load all template configuration fields.
 		SetString(fixture, L"fairy_model", L"fairy-test");
 		save();
-		TEST_ASSERT(LoadApiConfig(root, parser).fairyModel == L"fairy-test"); // Matching canonical and legacy model fields are accepted.
+		TEST_ASSERT(LoadApiConfig(root / L"custom-prompts", parser).fairyModel == L"fairy-test"); // Matching canonical and legacy model fields are accepted.
 		SetString(fixture, L"fairy_model", L"conflicting-fairy");
 		save();
-		ExpectPlatformFailure([&] { LoadApiConfig(root, parser); });
+		ExpectPlatformFailure([&] { LoadApiConfig(root / L"custom-prompts", parser); });
 		fixture->fields.RemoveAt(fixture->fields.Count() - 1);
 		auto legacyModelField = fixture->fields[fixture->fields.Count() - 1];
 		legacyModelField->name.value = L"fairy_model";
 		save();
-		TEST_ASSERT(LoadApiConfig(root, parser).fairyModel == L"fairy-test"); // The canonical fairy_model field works without the legacy alias.
+		TEST_ASSERT(LoadApiConfig(root / L"custom-prompts", parser).fairyModel == L"fairy-test"); // The canonical fairy_model field works without the legacy alias.
 		legacyModelField->name.value = L"chat_model";
 
 		for (auto malformed : { L"{\"apikey\":\"test-secret\"", L"@{}", L"[]", L"{}", L"{\"apikey\":\"test-secret\",\"apikey\":\"duplicate\"}" })
 		{
 			TEST_ASSERT(configFile.WriteAllText(malformed, false, stream::BomEncoder::Utf8)); // Save malformed configuration.
-			ExpectPlatformFailure([&] { LoadApiConfig(root, parser); });
+			ExpectPlatformFailure([&] { LoadApiConfig(root / L"custom-prompts", parser); });
 		}
 		SetString(fixture, L"chat_model", L"vision-test");
 		save();
-		TEST_ASSERT(LoadApiConfig(root, parser).fairyModel == L"vision-test"); // Independent model slots can target the same provider model.
+		TEST_ASSERT(LoadApiConfig(root / L"custom-prompts", parser).fairyModel == L"vision-test"); // Independent model slots can target the same provider model.
 		SetString(fixture, L"chat_model", L"fairy-test");
 		for (auto header : { L"Authorization", L"Bad Header: $APIKEY", L"Authorization: $APIKEY\r\nX-Injected: yes" })
 		{
 			SetString(fixture, L"auth_header", header);
 			save();
-			ExpectPlatformFailure([&] { LoadApiConfig(root, parser); });
+			ExpectPlatformFailure([&] { LoadApiConfig(root / L"custom-prompts", parser); });
 		}
 		SetString(fixture, L"auth_header", L"X-Api-Key: $APIKEY");
 		SetString(fixture, L"apikey", L"test-secret\r\nInjected: yes");
 		save();
-		ExpectPlatformFailure([&] { LoadApiConfig(root, parser); });
+		ExpectPlatformFailure([&] { LoadApiConfig(root / L"custom-prompts", parser); });
 		SetString(fixture, L"apikey", L"test-secret");
 		save();
-		TEST_ASSERT(LoadApiConfig(root, parser).authHeader == L"X-Api-Key: $APIKEY"); // A valid config loads after parse errors and supports custom authentication headers.
-		TEST_ASSERT(configFile.Delete() && Folder(root / L"env").Delete(false) && Folder(root).Delete(false)); // Remove only the temporary fixture files.
+		TEST_ASSERT(LoadApiConfig(root / L"custom-prompts", parser).authHeader == L"X-Api-Key: $APIKEY"); // A valid config loads after parse errors and supports custom authentication headers.
+		TEST_ASSERT(configFile.Delete() && Folder(root / L"custom-prompts").Delete(false) && Folder(root).Delete(false)); // Remove only the temporary fixture files.
 	});
 }

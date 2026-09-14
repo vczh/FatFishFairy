@@ -97,14 +97,14 @@ namespace fatfish
 		return result;
 	}
 
-	ApiConfig LoadApiConfig(const FilePath& repositoryRoot, json::Parser& parser)
+	ApiConfig LoadApiConfig(const FilePath& envFolder, json::Parser& parser)
 	{
 		WString source;
 		stream::BomEncoder::Encoding encoding;
 		bool containsBom = false;
-		if (!File(repositoryRoot / L"env" / L"apikey.json").ReadAllTextWithEncodingTesting(source, encoding, containsBom))
+		if (!File(envFolder / L"apikey.json").ReadAllTextWithEncodingTesting(source, encoding, containsBom))
 		{
-			throw Exception(L"Cannot read env/apikey.json. Copy env/apikey-template.json and configure the endpoint and dedicated models.");
+			throw Exception(L"Cannot read apikey.json. Copy apikey-template.json and configure the endpoint and dedicated models.");
 		}
 		Ptr<json::JsonObject> object;
 		try
@@ -114,9 +114,9 @@ namespace fatfish
 		catch (const Exception&)
 		{
 			// Parser diagnostics may contain the original secret-bearing input.
-			throw Exception(L"env/apikey.json is not valid JSON.");
+			throw Exception(L"apikey.json is not valid JSON.");
 		}
-		if (!object) throw Exception(L"env/apikey.json must contain a JSON object.");
+		if (!object) throw Exception(L"apikey.json must contain a JSON object.");
 		Dictionary<WString, WString> fields;
 		for (auto&& field : object->fields)
 		{
@@ -129,11 +129,11 @@ namespace fatfish
 		}
 		for (auto name : { L"apikey", L"url", L"auth_header", L"vision_model" })
 		{
-			if (!fields.Keys().Contains(name)) throw Exception(L"env/apikey.json is missing a required field from the template.");
+			if (!fields.Keys().Contains(name)) throw Exception(L"apikey.json is missing a required field from the template.");
 		}
 		auto hasFairyModel = fields.Keys().Contains(L"fairy_model");
 		auto hasChatModel = fields.Keys().Contains(L"chat_model");
-		if (!hasFairyModel && !hasChatModel) throw Exception(L"env/apikey.json requires fairy_model (or the legacy chat_model field).");
+		if (!hasFairyModel && !hasChatModel) throw Exception(L"apikey.json requires fairy_model (or the legacy chat_model field).");
 		if (hasFairyModel && hasChatModel && fields[L"fairy_model"] != fields[L"chat_model"])
 		{
 			throw Exception(L"fairy_model and legacy chat_model must agree when both are present.");

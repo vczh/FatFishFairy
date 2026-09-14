@@ -15,7 +15,6 @@ namespace fatfish
 	class FairyApplication
 	{
 	private:
-		vl::filesystem::FilePath                         repositoryRoot;
 		vl::glr::json::Parser                            parser;
 		ApiConfig                                       config;
 		MemoryStore                                     memory;
@@ -34,16 +33,16 @@ namespace fatfish
 		// Complete assistant JSON messages, before tool execution; true identifies Vision.
 		vl::Event<void(bool, const vl::WString&)>         ResponseReceived;
 
-		explicit                                        FairyApplication(const vl::filesystem::FilePath& root);
+		// The UI supplies both folders; neither location nor their relationship is assumed here.
+		                                                FairyApplication(const vl::filesystem::FilePath& envFolder, const vl::filesystem::FilePath& memoryFolder);
 		// Inject I/O to exercise the actual agent loop without credentials or desktop access.
-		                                                FairyApplication(const vl::filesystem::FilePath& root, const ApiConfig& apiConfig, const AgentPrompts& agentPrompts,
+		                                                FairyApplication(const vl::filesystem::FilePath& memoryFolder, const ApiConfig& apiConfig, const AgentPrompts& agentPrompts,
 		                                                    vl::Func<vl::WString(const vl::WString&)> completion,
 		                                                    vl::Func<void(vl::collections::List<MonitorSnapshot>&)> snapshots,
 		                                                    vl::Func<WebResponse(const vl::WString&)> httpGet);
 		// Join each agent's nonempty speak texts in order with newlines, across all tool replies.
 		// Forward the complete vision result to the fairy and return the complete fairy result.
 		vl::WString                                     RunRound();
-		static vl::filesystem::FilePath                  FindRepositoryRoot();
 	};
 }
 

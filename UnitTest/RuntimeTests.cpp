@@ -38,6 +38,33 @@ namespace
 
 TEST_FILE
 {
+	TEST_CASE(L"Application loads caller-supplied configuration and memory folders independently")
+	{
+		RuntimeTestFolder configuration;
+		RuntimeTestFolder storage;
+		auto envFolder = configuration.root / L"custom-prompts";
+		auto memoryFolder = storage.root / L"nested/custom-state";
+		TEST_ASSERT(Folder(envFolder).Create(false));
+		TEST_ASSERT(File(envFolder / L"apikey.json").WriteAllText(
+			LR"({"apikey":"test-secret","url":"https://example.test/v1","auth_header":"Authorization: Bearer $APIKEY","vision_model":"test-vision","fairy_model":"test-fairy"})",
+			false, stream::BomEncoder::Utf8));
+		for (auto name : { L"Tools.md", L"Guidance.md", L"Request_Vision.md", L"Request_Fairy.md", L"Character.md" })
+		{
+			TEST_ASSERT(File(envFolder / name).WriteAllText(L"合成测试提示", false, stream::BomEncoder::Utf8));
+		}
+		{
+			FairyApplication application(envFolder, memoryFolder); // Initialization must not capture the desktop or contact a model.
+		}
+		TEST_ASSERT(File(memoryFolder / L"Index.md").Exists());
+		TEST_ASSERT(!Folder(configuration.root / L"memory").Exists() && !Folder(storage.root / L"memory").Exists());
+		TEST_ASSERT(!Folder(memoryFolder / L"memory").Exists()); // Use the exact supplied folder without appending a conventional name.
+		TEST_ASSERT(File(envFolder / L"Request_Vision.md").Delete());
+		TEST_EXCEPTION(FairyApplication(envFolder, memoryFolder), Exception, [&](const Exception& error)
+		{
+			TEST_ASSERT(error.Message() == L"Missing or empty prompt: " + (envFolder / L"Request_Vision.md").GetFullPath());
+		}); // A missing supplied prompt must fail instead of searching for the repository's real env.
+	});
+
 	TEST_CASE(L"Agent rounds preserve history, report responses and recover from invalid replies")
 	{
 		RuntimeTestFolder folder;
@@ -119,14 +146,14 @@ data: [DONE]
 			}
 		};
 		auto web = [](const WString&) -> WebResponse { throw Exception(L"Unexpected network request in offline test."); };
-		FairyApplication application(folder.root, config, prompts, complete, capture, web);
+		FairyApplication application(folder.root / L"custom-state", config, prompts, complete, capture, web);
 		application.ResponseReceived.Add(Func<void(bool, const WString&)>([&](bool vision, const WString& message)
 		{
 			TEST_ASSERT(!wcschr(message.Buffer(), L'\n') && !wcschr(message.Buffer(), L'\r')); // A response must fit on one JSON log line.
 			auto parsed = ParseJson(message, parser);
 			TEST_ASSERT(GetString(parsed, L"role") == L"assistant" && !GetField(parsed, L"choices")); // Report the assistant message, not the transport envelope.
 			if (!vision && responses.Count() == 2)
-				TEST_ASSERT(!File(folder.root / L"memory" / L"interests" / L"cpp.md").Exists()); // Report tool requests before executing them.
+				TEST_ASSERT(!File(folder.root / L"custom-state" / L"interests" / L"cpp.md").Exists()); // Report tool requests before executing them.
 			responseAgents.Add(vision);
 			responses.Add(parsed);
 		}));
@@ -141,7 +168,7 @@ data: [DONE]
 		TEST_ASSERT(GetField(responses[2], L"content").Cast<json::JsonLiteral>()->value == json::JsonLiteralValue::Null); // Preserve the original JSON message, including null content.
 		TEST_ASSERT(GetField(responses[2], L"tool_calls").Cast<json::JsonArray>()->items.Count() == 3); // Log all tool calls from a mixed reply.
 		TEST_ASSERT(GetString(responses[6], L"content") == L"继续加油。"); // Log ordinary assistant content even when there is no speak.
-		TEST_ASSERT(File(folder.root / L"memory" / L"interests" / L"cpp.md").ReadAllTextByBom() == L"用户阅读 C++"); // Tool memory must persist to disk.
+		TEST_ASSERT(File(folder.root / L"custom-state" / L"interests" / L"cpp.md").ReadAllTextByBom() == L"用户阅读 C++"); // Tool memory must persist to disk.
 
 		// A failed fairy response must not poison the next round's conversation.
 		vint attempt = 0;
@@ -154,7 +181,7 @@ data: [DONE]
 			if (attempt++ == 0) throw Exception(L"Simulated transport failure.");
 			return terminal;
 		};
-		FairyApplication retry(folder.root, config, prompts, flaky, capture, web);
+		FairyApplication retry(folder.root / L"custom-state", config, prompts, flaky, capture, web);
 		TEST_EXCEPTION(retry.RunRound(), Exception, [](const Exception&) {});
 		TEST_ASSERT(retry.RunRound().Length() == 0); // Fairy may stay silent.
 
@@ -185,8 +212,8 @@ data: [DONE]
 				}
 				return terminal;
 			};
-			FairyApplication invalid(folder.root, config, prompts, malformed, capture, web);
-			TEST_ASSERT(invalid.RunRound().Length() == 0 && corrections == 3 && !File(folder.root / L"memory" / L"should-not-exist.md").Exists()); // Malformed envelope must get feedback without executing tools, then accept correction.
+			FairyApplication invalid(folder.root / L"custom-state", config, prompts, malformed, capture, web);
+			TEST_ASSERT(invalid.RunRound().Length() == 0 && corrections == 3 && !File(folder.root / L"custom-state" / L"should-not-exist.md").Exists()); // Malformed envelope must get feedback without executing tools, then accept correction.
 		}
 
 		vint argumentRequests = 0;
@@ -210,7 +237,7 @@ data: [DONE]
 			}
 			return terminal;
 		};
-		FairyApplication arguments(folder.root, config, prompts, badArguments, capture, web);
+		FairyApplication arguments(folder.root / L"custom-state", config, prompts, badArguments, capture, web);
 		TEST_ASSERT(arguments.RunRound().Length() == 0 && argumentRequests == 3); // Continue after tool argument correction.
 
 		vint loopRequests = 0;
@@ -219,7 +246,7 @@ data: [DONE]
 			loopRequests++;
 			return WString(LR"({"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","tool_calls":[{"id":"repeat","type":"function","function":{"name":"file_list","arguments":"{}"}}]}}]})");
 		};
-		FairyApplication loop(folder.root, config, prompts, looping, capture, web);
+		FairyApplication loop(folder.root / L"custom-state", config, prompts, looping, capture, web);
 		TEST_EXCEPTION(loop.RunRound(), Exception, [](const Exception&) {});
 		TEST_ASSERT(loopRequests == 24); // Tool loop must have a finite request budget.
 	});
@@ -304,7 +331,7 @@ data: [DONE]
 			snapshots.Add(snapshot);
 		};
 		auto web = [](const WString&) -> WebResponse { throw Exception(L"Unexpected network request in speech aggregation test."); };
-		FairyApplication application(folder.root, config, prompts, complete, capture, web);
+		FairyApplication application(folder.root / L"custom-state", config, prompts, complete, capture, web);
 		for (; round < 3; round++)
 		{
 			step = 0;

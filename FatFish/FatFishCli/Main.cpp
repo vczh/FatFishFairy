@@ -38,8 +38,27 @@ int wmain(int argc, wchar_t* argv[])
 				return 2;
 			}
 		}
-		auto root = repository.Length() == 0 ? FairyApplication::FindRepositoryRoot() : FilePath(repository);
-		FairyApplication application(root);
+		FilePath root;
+		if (repository.Length() == 0)
+		{
+			collections::Array<wchar_t> executable(32768);
+			auto length = GetModuleFileNameW(nullptr, &executable[0], static_cast<DWORD>(executable.Count()));
+			if (length == 0 || length >= static_cast<DWORD>(executable.Count())) throw Exception(L"Cannot locate executable.");
+			auto executableFolder = FilePath(WString::CopyFrom(&executable[0], length)).GetFolder();
+			// Match the output folders in FatFish/Common.props for Debug and Release.
+#ifdef _WIN64
+			root = executableFolder / L"../../.."; // FatFish/x64/<Configuration>
+#else
+			root = executableFolder / L"../.."; // FatFish/<Configuration>
+#endif
+		}
+		else
+		{
+			root = FilePath(repository);
+		}
+		auto envFolder = root / L"env";
+		auto memoryFolder = root / L"memory";
+		FairyApplication application(envFolder, memoryFolder);
 		vl::glr::json::Parser outputParser;
 		application.ResponseReceived.Add(Func<void(bool, const WString&)>([&](bool vision, const WString& message)
 		{

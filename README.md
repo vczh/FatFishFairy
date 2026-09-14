@@ -22,7 +22,7 @@ Set-Location FatFish
 产物为 `FatFish/x64/Debug/FatFishCli.exe`（Win32 产物位于 `FatFish/Debug`）。支持 Debug/Release × Win32/x64；Debug 启用内存泄漏检查。
 
 ```powershell
-# 在仓库根目录启动；程序也能从可执行文件位置向上寻找 env。
+# 从仓库根目录启动；env 和 memory 的定位使用可执行文件路径，不依赖工作目录。
 & ./FatFish/x64/Debug/FatFishCli.exe
 & ./FatFish/x64/Debug/FatFishCli.exe --once
 ```
@@ -40,7 +40,7 @@ Set-Location FatFish
 
 构建后，在仓库根目录的 PowerShell 7 中运行 `& "$PWD/UnitTest/PlatformSmoke/Invoke.ps1" -Configuration Debug -Platform x64` 可验证实际截图、PNG 编码、HTTP 请求和记忆写入。此测试将截图仅发送到本机回环测试服务器，在内存中解码，不保存图片、不连接真实模型服务；结束后还原调试参数并删除临时目录。
 
-`Agents` 静态库包含全部代理、工具、配置和截图逻辑；CLI 只负责参数、按键和输出。每轮包含全部显示器的 PNG 图像、坐标和尺寸，支持负坐标与混合 DPI。图像只在内存中处理并发送给配置的模型服务器；精灵只接收视觉描述。`env` 的中文工具说明、记忆指引和角色请求随每次模型提交发送，精灵额外接收原有的 `Character.md`。
+`Agents` 静态库包含全部代理、工具、配置和截图逻辑；CLI 负责参数、按键、输出和目录定位。CLI 先读取自身可执行文件的完整路径，再用 `vl::filesystem::FilePath` 计算 `env` 和 `memory`，作为两个独立路径传给 `FairyApplication`；`Agents` 不查找仓库根目录，也不假设两个目录的名称或相对位置。按当前构建布局，x64 从可执行文件所在目录使用 `../../../env` 和 `../../../memory`，Win32 使用 `../../env` 和 `../../memory`，Debug 与 Release 相同。`--repo-root` 在 CLI 中覆盖根目录，未来 `FatFishFairy` 也遵循同样的目录传入设计。每轮包含全部显示器的 PNG 图像、坐标和尺寸，支持负坐标与混合 DPI。图像只在内存中处理并发送给配置的模型服务器；精灵只接收视觉描述。`env` 的中文工具说明、记忆指引和角色请求随每次模型提交发送，精灵额外接收原有的 `Character.md`。
 
 CLI 在每条回复接收完整后，将双方的 `speak` 调用显示为下面的文本块，保留原文换行和引号；其他工具调用、普通文字和空的结束消息仍以 `Vision> JSON` 或 `Fairy> JSON` 显示。混合工具调用保留顺序，已显示的发言不再重复出现在 JSON 中；无法解析的 `speak` 参数保留为 JSON 以便诊断。不打印发送给代理的请求。
 

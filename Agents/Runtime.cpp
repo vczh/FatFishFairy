@@ -1,5 +1,4 @@
 #include "Runtime.h"
-#include <Windows.h>
 
 using namespace vl;
 using namespace vl::collections;
@@ -22,18 +21,17 @@ namespace fatfish
 ])json", parser);
 	}
 
-	FairyApplication::FairyApplication(const FilePath& root)
-		: repositoryRoot(root)
-		, memory(root / L"memory")
+	FairyApplication::FairyApplication(const FilePath& envFolder, const FilePath& memoryFolder)
+		: memory(memoryFolder)
 	{
-		config = LoadApiConfig(root, parser);
+		config = LoadApiConfig(envFolder, parser);
 		auto read = [&](const WString& name)
 		{
 			WString result;
 			stream::BomEncoder::Encoding encoding;
 			bool containsBom;
-			if (!File(root / L"env" / name).ReadAllTextWithEncodingTesting(result, encoding, containsBom) || result.Length() == 0)
-				throw Exception(L"Missing or empty prompt: env/" + name);
+			if (!File(envFolder / name).ReadAllTextWithEncodingTesting(result, encoding, containsBom) || result.Length() == 0)
+				throw Exception(L"Missing or empty prompt: " + (envFolder / name).GetFullPath());
 			return result;
 		};
 		prompts.tools = read(L"Tools.md");
@@ -47,11 +45,10 @@ namespace fatfish
 		Initialize();
 	}
 
-	FairyApplication::FairyApplication(const FilePath& root, const ApiConfig& apiConfig, const AgentPrompts& agentPrompts,
+	FairyApplication::FairyApplication(const FilePath& memoryFolder, const ApiConfig& apiConfig, const AgentPrompts& agentPrompts,
 		Func<WString(const WString&)> completion, Func<void(List<MonitorSnapshot>&)> snapshots, Func<WebResponse(const WString&)> httpGet)
-		: repositoryRoot(root)
-		, config(apiConfig)
-		, memory(root / L"memory")
+		: config(apiConfig)
+		, memory(memoryFolder)
 		, prompts(agentPrompts)
 		, complete(completion)
 		, capture(snapshots)
@@ -279,21 +276,5 @@ namespace fatfish
 			while (fairyHistory->items.Count() > previousCount) fairyHistory->items.RemoveAt(fairyHistory->items.Count() - 1);
 			throw;
 		}
-	}
-
-	FilePath FairyApplication::FindRepositoryRoot()
-	{
-		Array<wchar_t> executable(32768);
-		auto length = GetModuleFileNameW(nullptr, &executable[0], (DWORD)executable.Count());
-		if (length == 0 || length >= static_cast<DWORD>(executable.Count())) throw Exception(L"Cannot locate executable.");
-		auto current = FilePath(WString::CopyFrom(&executable[0], length)).GetFolder();
-		for (;;)
-		{
-			if (File(current / L"env" / L"Tools.md").Exists()) return current;
-			auto parent = current.GetFolder();
-			if (parent == current || current.IsRoot()) break;
-			current = parent;
-		}
-		throw Exception(L"Cannot locate repository env folder. Use --repo-root PATH.");
 	}
 }
