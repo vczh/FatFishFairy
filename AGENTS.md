@@ -122,6 +122,7 @@ In `REPO-ROOT/env` these files are submitted to agents accordingly, in each requ
 You are not recommended to modify this library, but if you really need to:
 - The whole organization is cloned in `REPO-ROOT/../../vczh-librarires`, read its `AGENTS.md` before starting.
 - You should commit and push all local changes in that organization, and then update the `Release` submodule, to use your fix.
+- If you find yourself do not as the permission to submit to this github organization, then just don't change it.
 
 ### Agents
 
