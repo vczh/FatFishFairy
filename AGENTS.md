@@ -92,7 +92,7 @@ In `REPO-ROOT/env` these files are submitted to agents accordingly, in each requ
 - `Windows SDK Version`: `Windows 10.0 SDK (latest)`
 - `Platform Toolset`: `v145 for Microsoft C++ Build Tools`
 - `C++ Language Standard`: `ISO C++ 20 Standard`
-- `Include Directories`: add the `REPO-ROOT/Import` folder
+- `Include Directories`: add the `REPO-ROOT/Release/Import` folder directly.
 - `Use Library Dependency Inputs`: `Yes`
 - `Preprocessor`:
   - `VCZH_DEBUG_NO_REFLECTION`: all reflection code will be eliminated during compiling
@@ -135,6 +135,12 @@ You are not recommended to modify this library, but if you really need to:
 Accept two keys:
 - `ESC`: exit.
 - `ENTER`: run the vision agent followed by the fairy agent, print anything the fairy want to speak to the user.
+
+### Verification
+
+- Verification must include 10 consecutive successful `ENTER` rounds in `FatFishCli`, using the configured real models in one running process.
+- Each round must finish the vision agent followed by the fairy agent successfully. After all 10 rounds, press `ESC` and verify a clean exit.
+- If any round fails, fix the problem and restart the 10-round verification before reporting completion.
 
 ## FatFishFairy
 

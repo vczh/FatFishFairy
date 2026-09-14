@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup>
-    <IncludePath>$(MSBuildThisFileDirectory)..\Import;$(IncludePath)</IncludePath>
+    <IncludePath>$(MSBuildThisFileDirectory)..\Release\Import;$(IncludePath)</IncludePath>
     <IntDir>$(ProjectDir)$(Platform)\$(Configuration)\</IntDir>
     <OutDir>$(MSBuildThisFileDirectory)$(Platform)\$(Configuration)\</OutDir>
     <OutDir Condition="'$(Platform)'=='Win32'">$(MSBuildThisFileDirectory)$(Configuration)\</OutDir>
