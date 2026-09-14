@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="Current" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source Files"><Extensions>cpp;c;cc;cxx;h;hpp;hxx;inl</Extensions></Filter>
+    <Filter Include="Header Files"><Extensions>h;hpp;hxx;inl</Extensions></Filter>
+    <Filter Include="Resource Files"><Extensions>rc;ico;bmp;png</Extensions></Filter>
+    <Filter Include="Source Files\Vlpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="..\..\Release\Import\Vlpp.cpp"><Filter>Source Files\Vlpp</Filter></ClCompile>
+    <ClCompile Include="..\..\Release\Import\Vlpp.Windows.cpp"><Filter>Source Files\Vlpp</Filter></ClCompile>
+    <ClCompile Include="..\..\Release\Import\VlppOS.cpp"><Filter>Source Files\Vlpp</Filter></ClCompile>
+    <ClCompile Include="..\..\Release\Import\VlppOS.Windows.cpp"><Filter>Source Files\Vlpp</Filter></ClCompile>
+    <ClCompile Include="..\..\Release\Import\VlppRegex.cpp"><Filter>Source Files\Vlpp</Filter></ClCompile>
+    <ClCompile Include="..\..\Release\Import\VlppReflection.cpp"><Filter>Source Files\Vlpp</Filter></ClCompile>
+    <ClCompile Include="..\..\Release\Import\VlppGlrParser.cpp"><Filter>Source Files\Vlpp</Filter></ClCompile>
+    <ClCompile Include="..\..\Agents\Json.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="..\..\Agents\Memory.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="..\..\Agents\MemoryTests.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="..\..\Agents\Platform.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="..\..\Agents\PlatformTests.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="..\..\Agents\Runtime.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="..\..\Agents\RuntimeTests.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClInclude Include="..\..\Import\Vlpp.h"><Filter>Source Files\Vlpp</Filter></ClInclude>
+    <ClInclude Include="..\..\Import\VlppOS.h"><Filter>Source Files\Vlpp</Filter></ClInclude>
+    <ClInclude Include="..\..\Import\VlppOS.Windows.h"><Filter>Source Files\Vlpp</Filter></ClInclude>
+    <ClInclude Include="..\..\Import\VlppRegex.h"><Filter>Source Files\Vlpp</Filter></ClInclude>
+    <ClInclude Include="..\..\Import\VlppReflection.h"><Filter>Source Files\Vlpp</Filter></ClInclude>
+    <ClInclude Include="..\..\Import\VlppGlrParser.h"><Filter>Source Files\Vlpp</Filter></ClInclude>
+    <ClInclude Include="..\..\Agents\Json.h"><Filter>Source Files</Filter></ClInclude>
+    <ClInclude Include="..\..\Agents\Memory.h"><Filter>Source Files</Filter></ClInclude>
+    <ClInclude Include="..\..\Agents\Platform.h"><Filter>Source Files</Filter></ClInclude>
+    <ClInclude Include="..\..\Agents\Runtime.h"><Filter>Source Files</Filter></ClInclude>
+  </ItemGroup>
+</Project>

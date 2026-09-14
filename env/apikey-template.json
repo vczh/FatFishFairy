@@ -3,5 +3,5 @@
     "url": "Base url of LLM Query Endpoint",
     "auth_header": "Authorization: Bearer $APIKEY",
     "vision_model": "Default vision model to use",
-    "chat_model": "Default chat model to use"
+    "fairy_model": "Default fairy model to use"
 }
