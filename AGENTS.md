@@ -1,0 +1,145 @@
+# FatFishFairy
+
+<!-- All comments in this format should be kept -->
+
+The goal of this project is to create a desktop fairy with realtime response to user actions:
+- The app keeps taking snapshots of all monitors in a reasonable rate.
+- A model with stateless session (the vision agent) describe what could be seen from snapshots, another model with memory (the fairy agent) react to the description.
+- The fairy tries to remember any interesting stuff about the user.
+- To simplify the architecture, everything could be running in the same thread.
+
+This application is Windows only, no need to worry about cross platform stuff.
+
+## Supported Tools
+
+- Tools available to all agents
+  - HTTP/HTTPS querying, for learning knowledges.
+  - File reading.
+  - File writing, unexisting folders and the target file will be created recursively.
+  - File deleting, folders without any file will be deleted:
+    - From the direct folder of the target file to the root folder, if a folder is empty, delete that folder.
+    - The `ROOT-REPO/memory` folder should never be deleted.
+    - The `ROOT-REPO/Index.md` file should never be deleted.
+  - File searching.
+  - Speak:
+    - For the vision agent: description from snapshots.
+    - For the fairy agent: anything want to say to the user.
+
+### Restrictions
+
+- File access should only limit to everything in the`REPO-ROOT/memory` folder.
+- Path given to file tools should not contain anything like `.` or `..` that could escape from the folder. Later the path should be first expanded to an absolute path, verify and deny if the target file is not in the memory folder.
+- All files will be loaded into a `Dictionary<WString, Ptr<List<WString>>>` data structure:
+  - The key is a normalized path to the memory folder.
+  - The value is all lines of the file.
+  - Reading and searching could be performed without accessing the file system, writing will be submitted to the dictionary and the file system.
+
+### Specification
+
+Maintain tool spec in `REPO-ROOT/env/Tools.md` in this format:
+```markdown
+## Specification (TOOL-NAME)
+Request and response format, behavior, other details
+```
+
+## Authorization
+
+`REPO-ROOT/env/apikey.json` has anything needed for the authorization. This file contains sensitive information:
+- It cannot be committed to git, always make sure `REPO-ROOT/env/.gitignore` already excludes it.
+- All agents should use its own dedicated model.
+- Follow OpenAI chat competion protocol but it connects to a non-official server.
+
+## Agents
+
+In `REPO-ROOT/env` these files are submitted to agents accordingly, in each request submission:
+- `Tools.md`, describe specification of all tools to all agents.
+- `Guidance.md`, guidance about how to maintain memories based on the file system, including that `Index.md` should be used to index all other files, offering efficient advices.
+- `Character.md`, fixed request to the fairy agent, about its characteristic.
+- `Request_Vision.md`, fixed request to the vision agent.
+- `Request_Fairy.md`, fixed request to the fairy agent.
+
+**IMPORTANT**: All files listed here should be in Chinese. Except `Character.md`, all files could be modified during development.
+
+### the Vision
+
+- Requests to the agent should combine `REPO-ROOT/env/Tools.md` and `REPO-ROOT/env/Request_Vision.md`.
+- Submit snapshots of all monitors.
+- Expect very detailed description from the snapshot.
+- Every round starts a new session, nothing from the last round is needed.
+
+### The Fairy
+
+- Requests to the agent should combine `REPO-ROOT/env/Tools.md` and `REPO-ROOT/env/Request_Fairy.md`.
+- Submit description from the snapshot.
+- The agent will access and maintain memories about anything, especially any interesting stuff about the user, try to summarize and infer what the user like, what the user is usually doing, etc.
+- The agent may choose to say something to the user.
+- Every round runs in the same session.
+
+## File Organization
+
+- `env`: files to be loaded.
+- `memory`: the folder for agents to maintain their memory.
+- `Release`: the submodule to `https://vczh-libraries/Release`.
+- `Agents`: the folder for all shared source files.
+- `FatFish`:
+  - `FatFish.sln`: The solution file.
+  - `Agents/Agents.vcxproj`: A shared library to index all `Agents` source files.
+  - `FatFishCli/FatFishCli.vcxproj`.
+  - `FatFishFairy/FatFishFairy.vcxproj`.
+
+## Important vcxproj Settings
+
+- `Windows SDK Version`: `Windows 10.0 SDK (latest)`
+- `Platform Toolset`: `v145 for Microsoft C++ Build Tools`
+- `C++ Language Standard`: `ISO C++ 20 Standard`
+- `Include Directories`: add the `REPO-ROOT/Import` folder
+- `Use Library Dependency Inputs`: `Yes`
+- `Preprocessor`:
+  - `VCZH_DEBUG_NO_REFLECTION`: all reflection code will be eliminated during compiling
+  - debug profile
+    - `VCZH_CHECK_MEMORY_LEAKS`
+    - memory leaks checking should only be applied on debug profile.
+- You can copy settings from the `Release` submodule as a start.
+
+## Building
+
+- There are already powershell scripts from the `Release` submodule to build and debug any vcxproj project, you are recommended to use them.
+- If they must be modified, copy them to this repo, do not update `Release` for such reasons.
+
+## Shared Library
+
+### GacUI
+
+- Maintain a submodule to `https://vczh-libraries/Release` to the `Release` folder.
+- Always update the submodule to its latest `master` branch before working.
+- It contains all necessary C++ constructions, you are strong recommended to use them instead of STL, Windows API, etc.
+- `HttpClientApi` encapsulates the [WinHTTP](https://learn.microsoft.com/en-us/windows/win32/winhttp/about-winhttp) api for easier use.
+  - If it lacks of `https` ability, you can add it.
+- From its `.github/copilot-instructions.md` it has everyting you need to understand the library.
+
+#### Updating GacUI
+
+You are not recommended to modify this library, but if you really need to:
+- The whole organization is cloned in `REPO-ROOT/../../vczh-librarires`, read its `AGENTS.md` before starting.
+- You should commit and push all local changes in that organization, and then update the `Release` submodule, to use your fix.
+
+### Agents
+
+- `FatFishCli`, `FatFishFairy` or any other test apps should only be a thin UI layer.
+- All source files about agents and other features should be in the `REPO-ROOT/Agents` folder.
+
+## FatFishCli test app
+
+Accept two keys:
+- `ESC`: exit.
+- `ENTER`: run the vision agent followed by the fairy agent, print anything the fairy want to speak to the user.
+
+## FatFishFairy
+
+(non goal for now)
+
+## Important Learning
+
+<!--
+You can write anything in this section during development to make future works more efficient.
+-->
