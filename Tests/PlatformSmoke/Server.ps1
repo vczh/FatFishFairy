@@ -28,11 +28,35 @@ function Send-Json($Context, $Object) {
 function Make-Tool([string]$Id, [string]$Name, $Arguments) {
   return @{ id = $Id; type = 'function'; function = @{ name = $Name; arguments = ($Arguments | ConvertTo-Json -Compress) } }
 }
+function Send-Completion($Context, $Object) {
+  $choice = $Object.choices[0]
+  $chunks = @(@{ choices = @(@{ index = 0; delta = @{ role = 'assistant'; content = $choice.message.content }; finish_reason = $null }) })
+  $index = 0
+  foreach ($call in $choice.message.tool_calls) {
+    $arguments = $call.function.arguments
+    $split = [int][Math]::Floor($arguments.Length / 2)
+    $chunks += @{ choices = @(@{ index = 0; delta = @{ tool_calls = @(@{ index = $index; id = $call.id; type = 'function'; function = @{ name = $call.function.name; arguments = $arguments.Substring(0, $split) } }) }; finish_reason = $null }) }
+    $chunks += @{ choices = @(@{ index = 0; delta = @{ tool_calls = @(@{ index = $index; id = $null; type = $null; function = @{ name = $null; arguments = $arguments.Substring($split) } }) }; finish_reason = $null }) }
+    $index++
+  }
+  $chunks += @{ choices = @(@{ index = 0; delta = @{}; finish_reason = $choice.finish_reason }) }
+  $Context.Response.StatusCode = 200
+  $Context.Response.ContentType = 'text/event-stream; charset=utf-8'
+  $Context.Response.SendChunked = $true
+  foreach ($chunk in $chunks) {
+    $bytes = [Text.Encoding]::UTF8.GetBytes('data: ' + ($chunk | ConvertTo-Json -Depth 30 -Compress) + "`r`n`r`n")
+    $Context.Response.OutputStream.Write($bytes, 0, $bytes.Length)
+    $Context.Response.OutputStream.Flush()
+  }
+  $bytes = [Text.Encoding]::UTF8.GetBytes("data: [DONE]`r`n`r`n")
+  $Context.Response.OutputStream.Write($bytes, 0, $bytes.Length)
+  $Context.Response.Close()
+}
 try {
   $listener.Start()
   [IO.File]::WriteAllText((Join-Path $FixtureRoot 'ready'), 'ready')
   $screenCount = [System.Windows.Forms.Screen]::AllScreens.Count
-  while ($report.posts -lt 3) {
+  while ($report.posts -lt 4) {
     $pending = $listener.GetContextAsync()
     if (-not $pending.Wait(120000)) { throw 'Timed out waiting for the local fixture request.' }
     $context = $pending.Result
@@ -52,7 +76,7 @@ try {
     $reader = [IO.StreamReader]::new($context.Request.InputStream, [Text.Encoding]::UTF8)
     $payload = $reader.ReadToEnd() | ConvertFrom-Json -Depth 100
     $reader.Dispose()
-    Assert-Smoke ($payload.stream -eq $false) 'Expected a non-streaming completion request.'
+    Assert-Smoke ($payload.stream -eq $true) 'Expected a streaming completion request.'
     Assert-Smoke ($payload.tools.Count -eq 7) 'Both models should receive the complete tool schema.'
     Assert-Smoke ($payload.messages[0].content.Contains('中文测试')) 'UTF-8 Chinese prompt text was corrupted.'
     $report.posts++
@@ -78,16 +102,20 @@ try {
         $bytes = $null
         $dataUrl = $null
       }
-      Send-Json $context @{ choices = @(@{ finish_reason = 'stop'; message = @{ role = 'assistant'; content = '本地屏幕捕获和 PNG 编码验证通过。' } }) }
+      Send-Completion $context @{ choices = @(@{ finish_reason = 'tool_calls'; message = @{ role = 'assistant'; tool_calls = @((Make-Tool 'vision-speech' 'speak' @{ text = '本地屏幕捕获和 PNG 编码验证通过。' })) } }) }
     } elseif ($report.posts -eq 2) {
-      Assert-Smoke ($payload.model -eq 'smoke-fairy') 'Second request must use the dedicated fairy model.'
+      Assert-Smoke ($payload.model -eq 'smoke-vision' -and $payload.messages.Count -eq 4) 'Vision must receive its tool feedback.'
+      Assert-Smoke ($payload.messages[3].tool_call_id -eq 'vision-speech') 'Vision feedback lost its streamed call ID.'
+      Send-Completion $context @{ choices = @(@{ finish_reason = 'stop'; message = @{ role = 'assistant'; content = '' } }) }
+    } elseif ($report.posts -eq 3) {
+      Assert-Smoke ($payload.model -eq 'smoke-fairy') 'Third request must use the dedicated fairy model.'
       Assert-Smoke ($payload.messages[1].content.Contains('PNG 编码验证通过')) 'Vision description was not forwarded to fairy.'
       $calls = @(
         (Make-Tool 'local-web' 'http_get' @{ url = "http://127.0.0.1:$Port/knowledge" }),
         (Make-Tool 'local-memory' 'file_write' @{ path = 'integration/result.md'; content = '真实平台集成测试通过。' }),
         (Make-Tool 'local-speech' 'speak' @{ text = '本地平台集成测试通过。' })
       )
-      Send-Json $context @{ choices = @(@{ finish_reason = 'tool_calls'; message = @{ role = 'assistant'; content = $null; tool_calls = $calls } }) }
+      Send-Completion $context @{ choices = @(@{ finish_reason = 'tool_calls'; message = @{ role = 'assistant'; content = $null; tool_calls = $calls } }) }
     } else {
       Assert-Smoke ($payload.model -eq 'smoke-fairy') 'Tool follow-up must use the fairy model.'
       $replies = @($payload.messages | Where-Object role -eq 'tool')
@@ -100,7 +128,7 @@ try {
         }
       }
       $report.toolReplies = $replies.Count
-      Send-Json $context @{ choices = @(@{ finish_reason = 'stop'; message = @{ role = 'assistant'; content = '' } }) }
+      Send-Completion $context @{ choices = @(@{ finish_reason = 'stop'; message = @{ role = 'assistant'; content = '' } }) }
     }
     $payload = $null
   }

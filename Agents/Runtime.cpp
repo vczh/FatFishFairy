@@ -139,6 +139,48 @@ namespace fatfish
 		return json::JsonToString(result);
 	}
 
+	Ptr<json::JsonObject> ReadAssistantResponse(const WString& text, json::Parser& parser)
+	{
+		auto response = ParseChatCompletion(text, parser);
+		auto choices = GetField(response, L"choices").Cast<json::JsonArray>();
+		if (!choices || choices->items.Count() != 1) throw Exception(L"Expected one chat response choice.");
+		auto choice = choices->items[0];
+		auto finish = GetString(choice, L"finish_reason");
+		if (finish != L"stop" && finish != L"tool_calls") throw Exception(L"Chat completion did not finish normally.");
+		auto message = GetField(choice, L"message");
+		if (GetString(message, L"role") != L"assistant") throw Exception(L"Expected an assistant response.");
+		auto rawContent = GetField(message, L"content");
+		auto content = rawContent.Cast<json::JsonString>();
+		auto nullContent = rawContent.Cast<json::JsonLiteral>();
+		if (rawContent && !content && (!nullContent || nullContent->value != json::JsonLiteralValue::Null)) throw Exception(L"Invalid assistant content.");
+		auto rawCalls = GetField(message, L"tool_calls");
+		auto calls = rawCalls.Cast<json::JsonArray>();
+		auto nullCalls = rawCalls.Cast<json::JsonLiteral>();
+		if (rawCalls && !calls && (!nullCalls || nullCalls->value != json::JsonLiteralValue::Null)) throw Exception(L"Invalid tool_calls array.");
+		auto refusal = GetField(message, L"refusal").Cast<json::JsonString>();
+		if (refusal && refusal->content.value.Length() > 0) throw Exception(L"The model refused this request.");
+		auto assistant = TextMessage(L"assistant", content ? content->content.value : L"");
+		if (calls && calls->items.Count() > 0)
+		{
+			if (finish != L"tool_calls") throw Exception(L"Tool calls require a tool_calls finish reason.");
+			if (calls->items.Count() > 32) throw Exception(L"Too many tool calls in one response.");
+			SortedList<WString> ids;
+			// Validate the entire envelope before allowing any tool side effects.
+			for (auto call : calls->items)
+			{
+				auto id = GetString(call, L"id");
+				if (id.Length() == 0 || ids.Contains(id) || GetString(call, L"type") != L"function") throw Exception(L"Invalid tool call identifier or type.");
+				ids.Add(id);
+				auto function = GetField(call, L"function");
+				GetString(function, L"name");
+				GetString(function, L"arguments");
+			}
+			SetField(assistant, L"tool_calls", calls);
+		}
+		else if (finish == L"tool_calls") throw Exception(L"Missing tool calls in chat response.");
+		return assistant;
+	}
+
 	WString FairyApplication::RunAgent(bool vision, Ptr<json::JsonArray> history)
 	{
 		WString spoken;
@@ -152,43 +194,30 @@ namespace fatfish
 			SetString(request, L"model", vision ? config.visionModel : config.fairyModel);
 			SetField(request, L"messages", messages);
 			SetField(request, L"tools", toolSchema);
-			SetBoolean(request, L"stream", false);
-			auto response = ParseJson(complete(json::JsonToString(request)), parser);
-			auto choices = GetField(response, L"choices").Cast<json::JsonArray>();
-			if (!choices || choices->items.Count() == 0) throw Exception(L"Chat response has no choices.");
-			auto choice = choices->items[0];
-			auto finish = GetString(choice, L"finish_reason");
-			if (finish != L"stop" && finish != L"tool_calls") throw Exception(L"Chat completion did not finish normally: " + finish);
-			auto message = GetField(choice, L"message");
-			if (GetString(message, L"role") != L"assistant") throw Exception(L"Expected an assistant response.");
-			auto rawContent = GetField(message, L"content");
-			auto content = rawContent.Cast<json::JsonString>();
-			auto nullContent = rawContent.Cast<json::JsonLiteral>();
-			if (rawContent && !content && (!nullContent || nullContent->value != json::JsonLiteralValue::Null)) throw Exception(L"Invalid assistant content.");
-			auto rawCalls = GetField(message, L"tool_calls");
-			auto calls = rawCalls.Cast<json::JsonArray>();
-			auto nullCalls = rawCalls.Cast<json::JsonLiteral>();
-			if (rawCalls && !calls && (!nullCalls || nullCalls->value != json::JsonLiteralValue::Null)) throw Exception(L"Invalid tool_calls array.");
-			auto refusal = GetField(message, L"refusal").Cast<json::JsonString>();
-			if (refusal && refusal->content.value.Length() > 0) throw Exception(L"The model refused this request.");
-			auto assistant = TextMessage(L"assistant", content ? content->content.value : L"");
+			SetString(request, L"tool_choice", vision && spoken.Length() == 0 ? L"required" : L"auto");
+			SetBoolean(request, L"stream", true);
+			auto response = complete(json::JsonToString(request));
+			Ptr<json::JsonObject> assistant;
+			try
+			{
+				assistant = ReadAssistantResponse(response, parser);
+				if (vision && spoken.Length() == 0 && !GetField(assistant, L"tool_calls"))
+					throw Exception(L"视觉观察必须通过 speak 工具提交，普通文字不会转发。");
+			}
+			catch (const Exception& error)
+			{
+				// An invalid envelope has no usable call ID. Keep it out of history,
+				// and ask for a corrected response with compact feedback only.
+				auto feedback = Ptr(new json::JsonObject);
+				SetBoolean(feedback, L"ok", false);
+				SetString(feedback, L"error", L"回复格式错误，请重新提交正确的工具调用。" + error.Message());
+				history->items.Add(TextMessage(L"user", json::JsonToString(feedback)));
+				continue;
+			}
+			auto calls = GetField(assistant, L"tool_calls").Cast<json::JsonArray>();
+			history->items.Add(assistant);
 			if (calls && calls->items.Count() > 0)
 			{
-				if (finish != L"tool_calls") throw Exception(L"Tool calls require a tool_calls finish reason.");
-				if (calls->items.Count() > 32) throw Exception(L"Too many tool calls in one response.");
-				SortedList<WString> ids;
-				// Validate the entire envelope before allowing any tool side effects.
-				for (auto call : calls->items)
-				{
-					auto id = GetString(call, L"id");
-					if (id.Length() == 0 || ids.Contains(id) || GetString(call, L"type") != L"function") throw Exception(L"Invalid tool call identifier or type.");
-					ids.Add(id);
-					auto function = GetField(call, L"function");
-					GetString(function, L"name");
-					GetString(function, L"arguments");
-				}
-				SetField(assistant, L"tool_calls", calls);
-				history->items.Add(assistant);
 				for (auto call : calls->items)
 				{
 					auto function = GetField(call, L"function");
@@ -200,10 +229,8 @@ namespace fatfish
 			}
 			else
 			{
-				if (finish == L"tool_calls") throw Exception(L"Missing tool calls in chat response.");
-				history->items.Add(assistant);
-				// Accept a direct final answer from compatible providers as well as speak.
-				return spoken.Length() > 0 ? spoken : content ? content->content.value : WString();
+				// Only speak is observable, both by the fairy and by the user.
+				return spoken;
 			}
 		}
 		throw Exception(L"Agent exceeded 24 completion requests in this round.");

@@ -6,6 +6,7 @@
 namespace fatfish
 {
 	extern vl::Ptr<vl::glr::json::JsonNode> ParseJson(const vl::WString& text, vl::glr::json::Parser& parser);
+	extern vl::Ptr<vl::glr::json::JsonNode> ParseChatCompletion(const vl::WString& text, vl::glr::json::Parser& parser);
 	extern vl::Ptr<vl::glr::json::JsonNode> GetField(vl::Ptr<vl::glr::json::JsonNode> object, const vl::WString& name);
 	extern vl::WString GetString(vl::Ptr<vl::glr::json::JsonNode> object, const vl::WString& name);
 	extern void SetField(vl::Ptr<vl::glr::json::JsonObject> object, const vl::WString& name, vl::Ptr<vl::glr::json::JsonNode> value);

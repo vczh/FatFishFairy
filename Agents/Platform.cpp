@@ -163,7 +163,7 @@ namespace fatfish
 	WString PostChatCompletion(const ApiConfig& config, const WString& body)
 	{
 		auto url = ParseHttpUrl(GetChatCompletionUrl(config.url));
-		auto header = BuildAuthenticationHeader(config) + L"\r\nContent-Type: application/json; charset=utf-8\r\nAccept: application/json\r\n";
+		auto header = BuildAuthenticationHeader(config) + L"\r\nContent-Type: application/json; charset=utf-8\r\nAccept: text/event-stream, application/json\r\n";
 		HttpRequest requestBody;
 		requestBody.SetBodyUtf8(body);
 		if (requestBody.body.Count() > 256 * 1024 * 1024) throw Exception(L"The Chat Completions request exceeds 256 MiB.");

@@ -37,6 +37,60 @@ namespace fatfish
 		}
 	};
 
+	void RunCompletionStreamTests()
+	{
+		json::Parser parser;
+		auto stream = WString(LR"sse(:
+event: completion
+id: 1
+data: {"choices":[{"index":0,"delta":{"role":"assistant","content":"隐","tool_calls":[{"index":1,"id":"second","type":"function","function":{"name":"file_list","arguments":"{"}},{"index":0,"id":"first","type":"function","function":{"name":"speak","arguments":"{\"text\":"}}]},"finish_reason":null}]}
+
+data: {"choices":[{"index":0,"delta":{"content":"藏","tool_calls":[{"index":0,"id":null,"type":null,"function":{"name":null,"arguments":"\"你好\"}"}},{"index":1,"function":{"arguments":"}"}}]},"finish_reason":null}]}
+
+data: {"choices":[{"index":0,"delta":{},
+data: "finish_reason":"tool_calls"}]}
+
+data: {"choices":[],"usage":{"total_tokens":42}}
+
+data: [DONE]
+
+)sse");
+		auto check = [&](const WString& input)
+		{
+			auto response = ParseChatCompletion(input, parser);
+			auto choice = GetField(response, L"choices").Cast<json::JsonArray>()->items[0];
+			auto message = GetField(choice, L"message");
+			CHECK_ERROR(GetString(message, L"content") == L"隐藏", L"Stream content must concatenate.");
+			CHECK_ERROR(GetString(choice, L"finish_reason") == L"tool_calls", L"Stream finish reason.");
+			auto calls = GetField(message, L"tool_calls").Cast<json::JsonArray>();
+			CHECK_ERROR(calls->items.Count() == 2 && GetString(calls->items[0], L"id") == L"first" && GetString(calls->items[1], L"id") == L"second", L"Interleaved stream calls must be ordered by index.");
+			auto function = GetField(calls->items[0], L"function");
+			CHECK_ERROR(GetString(function, L"name") == L"speak" && GetString(function, L"arguments") == L"{\"text\":\"你好\"}", L"Keep initial name and append argument fragments.");
+			CHECK_ERROR(GetString(GetField(calls->items[1], L"function"), L"arguments") == L"{}", L"Second call arguments.");
+		};
+		check(stream);
+		WString crlf;
+		for (vint i = 0; i < stream.Length(); i++) crlf += stream[i] == L'\n' ? WString(L"\r\n") : WString::FromChar(stream[i]);
+		check(crlf);
+		for (auto invalid : {
+			WString(L"data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"),
+			WString(L"data: [DONE]\n\n"),
+			WString(L"x\n\n"),
+			stream + L"data: {}\n\n",
+			WString(LR"sse(data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"a"},{"index":0,"id":"b"}]},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+
+)sse")
+		})
+		{
+			bool rejected = false;
+			try { ParseChatCompletion(invalid, parser); }
+			catch (const Exception&) { rejected = true; }
+			CHECK_ERROR(rejected, L"Incomplete or conflicting streams must not be accepted.");
+		}
+	}
+
 	void RunRuntimeTests()
 	{
 		RuntimeTestFolder folder;
@@ -63,6 +117,11 @@ namespace fatfish
 			}
 		};
 		auto terminal = WString(LR"({"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":""}}]})");
+		auto observation = WString(LR"sse(data: {"choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"vision-speak","type":"function","function":{"name":"speak","arguments":"{\"text\":\"用户正在阅读 C++ 代码。\"}"}}]},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+
+)sse");
 		auto complete = [&](const WString& body)
 		{
 			auto request = ParseJson(body, parser);
@@ -71,22 +130,25 @@ namespace fatfish
 			auto system = GetString(messages->items[0], L"content");
 			CHECK_ERROR(wcsstr(system.Buffer(), L"工具说明") && wcsstr(system.Buffer(), L"记忆指引"), L"Prompts must accompany every request.");
 			CHECK_ERROR(GetField(request, L"tools").Cast<json::JsonArray>()->items.Count() == 7, L"Both agents need all tools.");
+			CHECK_ERROR(GetField(request, L"stream").Cast<json::JsonLiteral>()->value == json::JsonLiteralValue::True, L"Use streaming completions.");
 			switch (requestIndex++)
 			{
 			case 0:
 			case 4:
 			{
 				CHECK_ERROR(model == config.visionModel && messages->items.Count() == 2, L"Vision history must start fresh.");
+				CHECK_ERROR(GetString(request, L"tool_choice") == L"required", L"Vision must call tools until it submits an observation.");
 				CHECK_ERROR(!wcsstr(system.Buffer(), L"固定性格"), L"Only fairy receives the character prompt.");
 				auto parts = GetField(messages->items[1], L"content").Cast<json::JsonArray>();
 				CHECK_ERROR(parts->items.Count() == 4, L"Each monitor needs metadata and an image.");
 				CHECK_ERROR(GetString(parts->items[1], L"type") == L"image_url", L"Image content type.");
 				CHECK_ERROR(GetString(GetField(parts->items[3], L"image_url"), L"url") == L"data:image/png;base64,fixture", L"Second monitor missing.");
-				return WString(LR"({"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":null,"tool_calls":[{"id":"vision-speak","type":"function","function":{"name":"speak","arguments":"{\"text\":\"用户正在阅读 C++ 代码。\"}"}}]}}]})");
+				return observation;
 			}
 			case 1:
 			case 5:
 				CHECK_ERROR(model == config.visionModel && messages->items.Count() == 4, L"Vision tool result history.");
+				CHECK_ERROR(GetString(request, L"tool_choice") == L"auto", L"Vision must be allowed to end after speaking.");
 				CHECK_ERROR(GetString(messages->items[3], L"tool_call_id") == L"vision-speak", L"Tool result must match call id.");
 				return terminal;
 			case 2:
@@ -109,7 +171,7 @@ namespace fatfish
 		auto web = [](const WString&) -> WebResponse { throw Exception(L"Unexpected network request in offline test."); };
 		FairyApplication application(folder.root, config, prompts, complete, capture, web);
 		CHECK_ERROR(application.RunRound() == L"今天也在研究 C++ 呀。", L"Fairy speak output.");
-		CHECK_ERROR(application.RunRound() == L"继续加油。", L"Direct content compatibility.");
+		CHECK_ERROR(application.RunRound().Length() == 0, L"Ordinary assistant content must not be shown to the user.");
 		CHECK_ERROR(captures == 2 && requestIndex == 7, L"Each round must capture once and run vision before fairy.");
 		CHECK_ERROR(File(folder.root / L"memory" / L"interests" / L"cpp.md").ReadAllTextByBom() == L"用户阅读 C++", L"Tool memory must persist to disk.");
 
@@ -119,32 +181,72 @@ namespace fatfish
 		{
 			auto request = ParseJson(body, parser);
 			if (GetString(request, L"model") == config.visionModel)
-				return WString(LR"({"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"观察"}}]})");
+				return GetField(request, L"messages").Cast<json::JsonArray>()->items.Count() == 2 ? observation : terminal;
 			CHECK_ERROR(GetField(request, L"messages").Cast<json::JsonArray>()->items.Count() == 2, L"Failed fairy round must roll back history.");
-			if (attempt++ == 0) return WString(LR"({"choices":[{"finish_reason":"length","message":{"role":"assistant","content":"截断"}}]})");
+			if (attempt++ == 0) throw Exception(L"Simulated transport failure.");
 			return terminal;
 		};
 		FairyApplication retry(folder.root, config, prompts, flaky, capture, web);
 		bool rejected = false;
 		try { retry.RunRound(); }
 		catch (const Exception&) { rejected = true; }
-		CHECK_ERROR(rejected, L"Incomplete completions must fail.");
+		CHECK_ERROR(rejected, L"Transport failures must fail.");
 		CHECK_ERROR(retry.RunRound().Length() == 0, L"Fairy may stay silent.");
 
 		for (auto response : {
+			L"invalid JSON",
+			LR"({"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"这段普通文字不能代替视觉 speak。"}}]})",
+			LR"({"choices":[{"finish_reason":"length","message":{"role":"assistant","content":"截断"}}]})",
 			LR"({"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":true}}]})",
 			LR"({"choices":[{"finish_reason":"stop","message":{"role":"assistant","tool_calls":true}}]})",
 			LR"({"choices":[{"finish_reason":"stop","message":{"role":"assistant","tool_calls":[{"id":"write","type":"function","function":{"name":"file_write","arguments":"{\"path\":\"should-not-exist.md\",\"content\":\"bad\"}"}}]}}]})",
 			LR"({"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","tool_calls":[{"id":"duplicate","type":"function","function":{"name":"file_write","arguments":"{\"path\":\"should-not-exist.md\",\"content\":\"bad\"}"}},{"id":"duplicate","type":"function","function":{"name":"speak","arguments":"{}"}}]}}]})"
 		})
 		{
-			auto malformed = [=](const WString&) { return WString(response); };
+			vint corrections = 0;
+			auto malformed = [&](const WString& body)
+			{
+				auto request = ParseJson(body, parser);
+				if (GetString(request, L"model") == config.fairyModel) return terminal;
+				auto messages = GetField(request, L"messages").Cast<json::JsonArray>();
+				if (corrections++ == 0) return WString(response);
+				if (corrections == 2)
+				{
+					CHECK_ERROR(messages->items.Count() == 3, L"Reject malformed assistant envelopes from history.");
+					auto feedback = GetString(messages->items[2], L"content");
+					CHECK_ERROR(GetString(messages->items[2], L"role") == L"user" && feedback.Length() < 300 && !wcsstr(feedback.Buffer(), L"工具说明"), L"Envelope feedback must be compact without predefined prompts.");
+					CHECK_ERROR(GetField(ParseJson(feedback, parser), L"ok").Cast<json::JsonLiteral>()->value == json::JsonLiteralValue::False, L"Return envelope parse errors to the model.");
+					return observation;
+				}
+				return terminal;
+			};
 			FairyApplication invalid(folder.root, config, prompts, malformed, capture, web);
-			rejected = false;
-			try { invalid.RunRound(); }
-			catch (const Exception&) { rejected = true; }
-			CHECK_ERROR(rejected && !File(folder.root / L"memory" / L"should-not-exist.md").Exists(), L"Malformed envelope must not execute tools.");
+			CHECK_ERROR(invalid.RunRound().Length() == 0 && corrections == 3 && !File(folder.root / L"memory" / L"should-not-exist.md").Exists(), L"Malformed envelope must get feedback without executing tools, then accept correction.");
 		}
+
+		vint argumentRequests = 0;
+		auto badArguments = [&](const WString& body)
+		{
+			auto request = ParseJson(body, parser);
+			if (GetString(request, L"model") == config.fairyModel) return terminal;
+			auto messages = GetField(request, L"messages").Cast<json::JsonArray>();
+			if (argumentRequests++ == 0)
+				return WString(LR"({"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","tool_calls":[{"id":"bad-json","type":"function","function":{"name":"speak","arguments":"{bad"}},{"id":"unknown","type":"function","function":{"name":"unknown_tool","arguments":"{}"}}]}}]})");
+			if (argumentRequests == 2)
+			{
+				CHECK_ERROR(messages->items.Count() == 5, L"Every failed call needs feedback.");
+				for (vint i = 3; i < 5; i++)
+				{
+					auto feedback = GetString(messages->items[i], L"content");
+					CHECK_ERROR(GetString(messages->items[i], L"role") == L"tool" && feedback.Length() < 100, L"Tool errors must be compact tool messages.");
+					CHECK_ERROR(GetField(ParseJson(feedback, parser), L"ok").Cast<json::JsonLiteral>()->value == json::JsonLiteralValue::False, L"Argument parse and dispatch errors must be returned.");
+				}
+				return observation;
+			}
+			return terminal;
+		};
+		FairyApplication arguments(folder.root, config, prompts, badArguments, capture, web);
+		CHECK_ERROR(arguments.RunRound().Length() == 0 && argumentRequests == 3, L"Continue after tool argument correction.");
 
 		vint loopRequests = 0;
 		auto looping = [&](const WString&)
@@ -163,6 +265,7 @@ namespace fatfish
 	{
 		RunMemoryTests();
 		RunPlatformTests();
+		RunCompletionStreamTests();
 		RunRuntimeTests();
 	}
 }
