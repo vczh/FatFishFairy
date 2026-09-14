@@ -113,6 +113,7 @@ In `REPO-ROOT/env` these files are submitted to agents accordingly, in each requ
 - Maintain a submodule to `https://vczh-libraries/Release` to the `Release` folder.
 - Always update the submodule to its latest `master` branch before working.
 - It contains all necessary C++ constructions, you are strong recommended to use them instead of STL, Windows API, etc.
+  - Windows API is allowed if GacUI doesn't offer direct solution.
 - `HttpClientApi` encapsulates the [WinHTTP](https://learn.microsoft.com/en-us/windows/win32/winhttp/about-winhttp) api for easier use.
   - If it lacks of `https` ability, you can add it.
 - From its `.github/copilot-instructions.md` it has everyting you need to understand the library.
