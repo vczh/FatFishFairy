@@ -14,6 +14,8 @@ This application is Windows only, no need to worry about cross platform stuff.
 
 At the end of any coding task, update AGENTS.md and README.md to fix stale fact or add important information, commit and push local changes to the main branch, rebase if conflict.
 
+If the source code is not touched in a request, you are not required to run the verification.
+
 ## Supported Tools
 
 - Tools available to all agents
