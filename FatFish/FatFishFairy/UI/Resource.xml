@@ -29,9 +29,15 @@
   <Instance name="FairyWindowResource">
     <Instance ref.CodeBehind="false" ref.Class="fatfish::ui::FairyWindow">
       <Window
+        ref.Name="self"
         Text="FatFishFairy"
         ClientSize="x:384 y:384"
         ControlTemplate="fatfish::ui::FairyWindowTemplate">
+        <ToolstripMenu ref.Name="contextMenu">
+          <MenuItemButton Text="退出">
+            <ev.Clicked-eval><![CDATA[{ self.Close(); }]]></ev.Clicked-eval>
+          </MenuItemButton>
+        </ToolstripMenu>
         <Bounds ref.Name="fairyCanvas" AlignmentToParent="left:0 top:0 right:0 bottom:0">
           <ImageFrame ref.Name="fairyImage" Stretch="true" />
         </Bounds>

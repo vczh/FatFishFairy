@@ -35,7 +35,6 @@ private:
 	FilePath                                envFolder;
 	ThemePlayback                           playback;
 	Dictionary<WString, Ptr<INativeImage>>   images;
-	GuiToolstripMenu*                       contextMenu = nullptr;
 	vuint64_t                               lastFrameTime = 0;
 
 	void OnLeftButtonDown(GuiGraphicsComposition* sender, GuiMouseEventArgs& arguments)
@@ -91,15 +90,6 @@ public:
 			throw Exception(L"Cannot enable desktop fairy transparency.");
 		}
 
-		contextMenu = new GuiToolstripMenu(theme::ThemeName::Menu, this);
-		AddControlHostComponent(contextMenu);
-		auto exitItem = new GuiToolstripButton(theme::ThemeName::MenuItemButton);
-		exitItem->SetText(L"退出");
-		exitItem->Clicked.AttachLambda([this](GuiGraphicsComposition*, GuiEventArgs&)
-		{
-			Close();
-		});
-		contextMenu->GetToolstripItems().Add(exitItem);
 		auto events = GetBoundsComposition()->GetEventReceiver();
 		events->mouseDown.AttachMethod(this, &FairyDesktopWindow::OnLeftButtonDown);
 		events->mouseUp.AttachMethod(this, &FairyDesktopWindow::OnRightButtonUp);

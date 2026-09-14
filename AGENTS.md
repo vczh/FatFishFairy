@@ -193,6 +193,8 @@ Dragging the main window using left button moves the window.
 Right click the main window shows a menu organized as below:
 - `退出`: Exit the application.
 
+Define the named `contextMenu` ToolstripMenu component and its exit action in `UI/Resource.xml`. C++ only opens that generated component in response to right-click.
+
 `REPO-ROOT/env/config.json` looks like this
 ```JSON
 {

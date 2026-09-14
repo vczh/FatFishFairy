@@ -77,7 +77,7 @@ HTTP/HTTPS 网页 GET 使用 Vlpp 的 `HttpClientApi`。带认证的模型 POST 
 
 `env/config.json` 保存 `{"windowX":0,"windowY":0}`，允许其他显示器上的负坐标。文件或坐标缺失时默认为零，首次拖动后自动创建；保存保留其他配置字段。此文件已加入 Git 忽略列表。错误 JSON、非法坐标、缺失动画文件或尺寸不符的图片会明确报错。
 
-窗口模板定义在 `FatFish/FatFishFairy/UI/Resource.xml`。项目通过相邻的 `UI/GacUI.xml` 驱动文件运行 `Release/Tools/GacBuild.ps1`，生成 `UI/Source` 中的 C++ 文件；`CppCompressed` 将二进制资源嵌入 `FatFishUIResource.cpp`，无需部署独立 UI 资源文件。XML 和生成的 C++ 一起提交。
+窗口模板、命名为 `contextMenu` 的 `ToolstripMenu` 组件及“退出”动作定义在 `FatFish/FatFishFairy/UI/Resource.xml`，C++ 只负责响应右键并显示菜单。项目通过相邻的 `UI/GacUI.xml` 驱动文件运行 `Release/Tools/GacBuild.ps1`，生成 `UI/Source` 中的 C++ 文件；`CppCompressed` 将二进制资源嵌入 `FatFishUIResource.cpp`，无需部署独立 UI 资源文件。XML 和生成的 C++ 一起提交。
 
 `Agents/Desktop.h` 提供位置配置、主题目录读取和三遍播放顺序，GUI 只负责目录定位、图片解码、窗口和定时显示。新增离线用例覆盖配置校验、元数据和播放边界。PowerShell 7 中运行 `& "$PWD/FatFish/UnitTest/Invoke-Fairy.ps1" -Configuration Debug -Platform x64` 可检查实际窗口：它使用临时复制的可执行文件和主题，从其他工作目录启动，检查透明置顶、动画变化、拖动保存、重启恢复和菜单退出，不读取真实配置或密钥。
 

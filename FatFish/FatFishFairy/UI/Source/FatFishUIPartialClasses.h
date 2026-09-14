@@ -25,6 +25,7 @@ https://github.com/vczh-libraries
 namespace vl_workflow_global
 {
 	struct __vwsnf1_FatFishUI_fatfish_ui_FairyWindowConstructor___vwsn_fatfish_ui_FairyWindow_Initialize_;
+	struct __vwsnf2_FatFishUI_fatfish_ui_FairyWindowConstructor___vwsn_fatfish_ui_FairyWindow_Initialize_;
 }
 
 namespace fatfish
@@ -39,13 +40,16 @@ namespace fatfish
 		class FairyWindowConstructor : public ::vl::Object, public ::vl::reflection::Description<FairyWindowConstructor>
 		{
 			friend struct ::vl_workflow_global::__vwsnf1_FatFishUI_fatfish_ui_FairyWindowConstructor___vwsn_fatfish_ui_FairyWindow_Initialize_;
+			friend struct ::vl_workflow_global::__vwsnf2_FatFishUI_fatfish_ui_FairyWindowConstructor___vwsn_fatfish_ui_FairyWindow_Initialize_;
 #ifdef VCZH_DESCRIPTABLEOBJECT_WITH_METADATA
 			friend struct ::vl::reflection::description::CustomTypeDescriptorSelector<FairyWindowConstructor>;
 #endif
 		protected:
+			::fatfish::ui::FairyWindow* self;
+			::vl::presentation::controls::GuiToolstripMenu* contextMenu;
 			::vl::presentation::compositions::GuiBoundsComposition* fairyCanvas;
 			::vl::Ptr<::vl::presentation::elements::GuiImageFrameElement> fairyImage;
-			::fatfish::ui::FairyWindow* __vwsn_precompile_0;
+			::vl::presentation::controls::GuiToolstripButton* __vwsn_precompile_0;
 			void __vwsn_fatfish_ui_FairyWindow_Initialize(::fatfish::ui::FairyWindow* __vwsn_this_);
 		public:
 			FairyWindowConstructor();
@@ -55,6 +59,7 @@ namespace fatfish
 		{
 			friend class ::fatfish::ui::FairyWindowConstructor;
 			friend struct ::vl_workflow_global::__vwsnf1_FatFishUI_fatfish_ui_FairyWindowConstructor___vwsn_fatfish_ui_FairyWindow_Initialize_;
+			friend struct ::vl_workflow_global::__vwsnf2_FatFishUI_fatfish_ui_FairyWindowConstructor___vwsn_fatfish_ui_FairyWindow_Initialize_;
 #ifdef VCZH_DESCRIPTABLEOBJECT_WITH_METADATA
 			friend struct ::vl::reflection::description::CustomTypeDescriptorSelector<FairyWindow>;
 #endif
@@ -113,6 +118,15 @@ Closures
 		__vwsnf1_FatFishUI_fatfish_ui_FairyWindowConstructor___vwsn_fatfish_ui_FairyWindow_Initialize_(::fatfish::ui::FairyWindowConstructor* __vwsnctorthis_0);
 
 		::vl::presentation::templates::GuiControlTemplate* operator()(const ::vl::reflection::description::Value& __vwsn_viewModel_) const;
+	};
+
+	struct __vwsnf2_FatFishUI_fatfish_ui_FairyWindowConstructor___vwsn_fatfish_ui_FairyWindow_Initialize_
+	{
+		::fatfish::ui::FairyWindowConstructor* __vwsnthis_0;
+
+		__vwsnf2_FatFishUI_fatfish_ui_FairyWindowConstructor___vwsn_fatfish_ui_FairyWindow_Initialize_(::fatfish::ui::FairyWindowConstructor* __vwsnctorthis_0);
+
+		void operator()(::vl::presentation::compositions::GuiGraphicsComposition* sender, ::vl::presentation::compositions::GuiEventArgs* arguments) const;
 	};
 }
 

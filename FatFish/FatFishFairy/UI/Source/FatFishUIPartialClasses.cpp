@@ -67,6 +67,18 @@ Closures
 			return static_cast<::vl::presentation::templates::GuiControlTemplate*>(new ::fatfish::ui::FairyWindowTemplate());
 		}
 	}
+
+	//-------------------------------------------------------------------
+
+	__vwsnf2_FatFishUI_fatfish_ui_FairyWindowConstructor___vwsn_fatfish_ui_FairyWindow_Initialize_::__vwsnf2_FatFishUI_fatfish_ui_FairyWindowConstructor___vwsn_fatfish_ui_FairyWindow_Initialize_(::fatfish::ui::FairyWindowConstructor* __vwsnctorthis_0)
+		:__vwsnthis_0(::vl::__vwsn::This(__vwsnctorthis_0))
+	{
+	}
+
+	void __vwsnf2_FatFishUI_fatfish_ui_FairyWindowConstructor___vwsn_fatfish_ui_FairyWindow_Initialize_::operator()(::vl::presentation::compositions::GuiGraphicsComposition* sender, ::vl::presentation::compositions::GuiEventArgs* arguments) const
+	{
+		::vl::__vwsn::This(__vwsnthis_0->self)->Close();
+	}
 }
 
 /***********************************************************************
@@ -79,15 +91,31 @@ namespace fatfish
 	{
 		void FairyWindowConstructor::__vwsn_fatfish_ui_FairyWindow_Initialize(::fatfish::ui::FairyWindow* __vwsn_this_)
 		{
-			(this->__vwsn_precompile_0 = __vwsn_this_);
+			(this->self = __vwsn_this_);
 			{
-				::vl::__vwsn::This(this->__vwsn_precompile_0)->SetClientSize([&](){ ::vl::presentation::Size __vwsn_temp__; __vwsn_temp__.x = static_cast<::vl::vint>(384); __vwsn_temp__.y = static_cast<::vl::vint>(384); return __vwsn_temp__; }());
+				::vl::__vwsn::This(this->self)->SetClientSize([&](){ ::vl::presentation::Size __vwsn_temp__; __vwsn_temp__.x = static_cast<::vl::vint>(384); __vwsn_temp__.y = static_cast<::vl::vint>(384); return __vwsn_temp__; }());
 			}
 			{
-				::vl::__vwsn::This(this->__vwsn_precompile_0)->SetText(::vl::WString::Unmanaged(L"FatFishFairy"));
+				::vl::__vwsn::This(this->self)->SetText(::vl::WString::Unmanaged(L"FatFishFairy"));
 			}
 			{
-				::vl::__vwsn::This(this->__vwsn_precompile_0)->SetControlTemplate(vl::Func(::vl_workflow_global::__vwsnf1_FatFishUI_fatfish_ui_FairyWindowConstructor___vwsn_fatfish_ui_FairyWindow_Initialize_(this)));
+				::vl::__vwsn::This(this->self)->SetControlTemplate(vl::Func(::vl_workflow_global::__vwsnf1_FatFishUI_fatfish_ui_FairyWindowConstructor___vwsn_fatfish_ui_FairyWindow_Initialize_(this)));
+			}
+			{
+				(this->contextMenu = new ::vl::presentation::controls::GuiToolstripMenu(::vl::presentation::theme::ThemeName::Menu, static_cast<::vl::presentation::controls::GuiControl*>(nullptr)));
+				::vl::__vwsn::This(__vwsn_this_)->SetNamedObject(::vl::WString::Unmanaged(L"contextMenu"), ::vl::__vwsn::Box(this->contextMenu));
+			}
+			{
+				(this->__vwsn_precompile_0 = new ::vl::presentation::controls::GuiToolstripButton(::vl::presentation::theme::ThemeName::MenuItemButton));
+			}
+			{
+				::vl::__vwsn::This(this->__vwsn_precompile_0)->SetText(::vl::WString::Unmanaged(L"退出"));
+			}
+			{
+				::vl::__vwsn::This(::vl::__vwsn::UnboxCollection<::vl::reflection::description::IValueList>(::vl::__vwsn::This(this->contextMenu)->GetToolstripItems()).Obj())->Add(::vl::__vwsn::Box(this->__vwsn_precompile_0));
+			}
+			{
+				::vl::__vwsn::This(this->self)->AddControlHostComponent(static_cast<::vl::presentation::controls::GuiControlHost*>(this->contextMenu));
 			}
 			(this->fairyCanvas = new ::vl::presentation::compositions::GuiBoundsComposition());
 			::vl::__vwsn::This(__vwsn_this_)->SetNamedObject(::vl::WString::Unmanaged(L"fairyCanvas"), ::vl::__vwsn::Box(this->fairyCanvas));
@@ -103,14 +131,20 @@ namespace fatfish
 				::vl::__vwsn::This(this->fairyCanvas)->SetOwnedElement(::vl::Ptr<::vl::presentation::elements::IGuiGraphicsElement>(this->fairyImage));
 			}
 			{
-				::vl::__vwsn::This(::vl::__vwsn::This(this->__vwsn_precompile_0)->GetContainerComposition())->AddChild(static_cast<::vl::presentation::compositions::GuiGraphicsComposition*>(this->fairyCanvas));
+				::vl::__vwsn::This(::vl::__vwsn::This(this->self)->GetContainerComposition())->AddChild(static_cast<::vl::presentation::compositions::GuiGraphicsComposition*>(this->fairyCanvas));
+			}
+			{
+				auto __vwsn_event_handler_ = vl::Func(::vl_workflow_global::__vwsnf2_FatFishUI_fatfish_ui_FairyWindowConstructor___vwsn_fatfish_ui_FairyWindow_Initialize_(this));
+				::vl::__vwsn::EventAttach(::vl::__vwsn::This(this->__vwsn_precompile_0)->Clicked, __vwsn_event_handler_);
 			}
 		}
 
 		FairyWindowConstructor::FairyWindowConstructor()
-			: fairyCanvas(static_cast<::vl::presentation::compositions::GuiBoundsComposition*>(nullptr))
+			: self(static_cast<::fatfish::ui::FairyWindow*>(nullptr))
+			, contextMenu(static_cast<::vl::presentation::controls::GuiToolstripMenu*>(nullptr))
+			, fairyCanvas(static_cast<::vl::presentation::compositions::GuiBoundsComposition*>(nullptr))
 			, fairyImage(::vl::Ptr<::vl::presentation::elements::GuiImageFrameElement>())
-			, __vwsn_precompile_0(static_cast<::fatfish::ui::FairyWindow*>(nullptr))
+			, __vwsn_precompile_0(static_cast<::vl::presentation::controls::GuiToolstripButton*>(nullptr))
 		{
 		}
 
