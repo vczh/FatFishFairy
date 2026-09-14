@@ -175,7 +175,32 @@ CONTENT
 
 ## FatFishFairy
 
-(non goal for now)
+The application is based on GacUI, using `Release/Tools/GacBuild.ps1` to compile `FatFish/FatFishFairy/UI/Resource.xml` to `FatFish/FatFishFairy/UI/Source`, the `CppCompressed` options should be used to embed generated binary resources in `FatFishUIResource.cpp`. The application does not use hosted mode.
+
+### Main Window
+
+A frameless control template should be created for the main window.
+The main window is 384x384 without border, this could be implemented with customized frame enabled.
+The background should be #00FF00 so that when a png renders on it, the background color could be specified as a transparent color to make the transparent part in the png actually transparent.
+`GetWindowsForm` could be used to get the `HWND` of the main window, with appropriate Windows API to implement the transparent feature.
+
+### Behavior
+
+The main window is always top-most.
+Dragging the main window using left button moves the window.
+Right click the main window shows a menu organized as below:
+- `退出`: Exit the application.
+
+`REPO-ROOT/env/config.json` looks like this
+```JSON
+{
+  "windowX": 0,
+  "windowY": 0,
+}
+```
+This file defines the initial location of the main window. When stopping dragging the main window, this file should be updated to reflect the current location, therefore it is remembered and used at the next startup.
+
+### Playing Animation
 
 Theme assets are maintained separately from the future desktop window. Follow `themes/job.updateThemes.prompt.md` and mark an animation complete only after its files and metadata are verified. `themes/loli_maid` currently contains the three-frame `coffee` animation. Frames use contiguous `<animation>_1.png` names, are 384×384 RGBA PNGs, and have a single connected white sticker backing with about 8 pixels of padding, a one-pixel `#E0E0E0` outer edge, and fully transparent exterior. Keep scale, placement and sticker silhouette consistent across an animation. Preserve existing character references when adding animations.
 
