@@ -200,6 +200,10 @@ Right click the main window shows a menu organized as below:
 ```
 This file defines the initial location of the main window. When stopping dragging the main window, this file should be updated to reflect the current location, therefore it is remembered and used at the next startup.
 
+### Executing Agents
+
+(non goal for now)
+
 ### Playing Animation
 
 Theme assets are maintained separately from the future desktop window. Follow `themes/job.updateThemes.prompt.md` and mark an animation complete only after its files and metadata are verified. `themes/loli_maid` currently contains 10 animation series and 34 frames: `coffee`, `espresso`, `latte_art`, `homework`, `reading_manga`, `sleeping`, `playing`, `programming`, `drawing`, and `transformer`. `espresso` has five frames (two puck-preparation frames followed by three latte-making frames), and `transformer` has five transformation stages; all other series have three frames. Respect explicit `xN` stage counts in the prompt. Frames use contiguous `<animation>_1.png` names, are 384×384 RGBA PNGs, and have a single connected white sticker backing with about 8 pixels of padding, a one-pixel `#E0E0E0` outer edge, and fully transparent exterior. Keep scale and placement consistent across an animation; use a stable outline for ordinary actions and let transformation outlines follow the changing body shape. Preserve existing character references and completed animations when adding series. `index.json` stores distinct frame counts, not playback repetition counts.
