@@ -179,7 +179,7 @@ CONTENT
 
 Theme assets are maintained separately from the future desktop window. Follow `themes/job.updateThemes.prompt.md` and mark an animation complete only after its files and metadata are verified. `themes/loli_maid` currently contains the three-frame `coffee` animation. Frames use contiguous `<animation>_1.png` names, are 384×384 RGBA PNGs, and have a single connected white sticker backing with about 8 pixels of padding, a one-pixel `#E0E0E0` outer edge, and fully transparent exterior. Keep scale, placement and sticker silhouette consistent across an animation. Preserve existing character references when adding animations.
 
-The future player should select an animation randomly within the current theme, show one frame per second, and select again after the last frame. Seed its random generator afresh on each process start; playback is not implemented by the asset update job.
+The future player should select an animation series randomly within the current theme, show one frame per second, and play its complete frame sequence three consecutive times in total. Select the next series randomly only after the last frame of the third playthrough. Seed its random generator afresh on each process start; playback is not implemented by the asset update job.
 
 ## Important Learning
 
