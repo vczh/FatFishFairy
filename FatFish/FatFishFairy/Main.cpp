@@ -3,6 +3,10 @@
 #include "../../Agents/Desktop.h"
 #include <GacUI.Windows.h>
 #include <Skins/DarkSkin/DarkSkin.h>
+#include <CommCtrl.h>
+
+// Use the current system controls and TOOLINFO layout for the speech bubble.
+#pragma comment(linker, "\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 
 using namespace vl::collections;
 using namespace vl::filesystem;
@@ -37,6 +41,55 @@ private:
 	Dictionary<WString, Ptr<INativeImage>>   images;
 	Nullable<Point>                         dragStart;
 	vuint64_t                               lastFrameTime = 0;
+	HWND                                    speechBubble = nullptr;
+	TOOLINFOW                               speechTool = {};
+
+	void UpdateSpeechPosition()
+	{
+		if (!speechBubble) return;
+		auto bounds = GetNativeWindow()->GetBounds();
+		// Measure the displayed window so the balloon stem is included in its height.
+		RECT bubble;
+		if (!GetWindowRect(speechBubble, &bubble)) throw Exception(L"Cannot measure system speech bubble.");
+		auto width = bubble.right - bubble.left;
+		auto height = bubble.bottom - bubble.top;
+		auto x = bounds.x1.value + (bounds.Width().value - width) / 2;
+		auto y = bounds.y1.value - height;
+		if (auto screen = GetRelatedScreen())
+		{
+			auto workArea = screen->GetClientBounds();
+			if (x + width > workArea.x2.value) x = workArea.x2.value - width;
+			if (x < workArea.x1.value) x = workArea.x1.value;
+			if (y + height > workArea.y2.value) y = workArea.y2.value - height;
+			if (y < workArea.y1.value) y = workArea.y1.value;
+		}
+		SendMessageW(speechBubble, TTM_TRACKPOSITION, 0, MAKELPARAM(x, y));
+	}
+
+	void OnWindowOpened(GuiGraphicsComposition* sender, GuiEventArgs& arguments)
+	{
+		if (speechBubble) return;
+		INITCOMMONCONTROLSEX controls = { sizeof(controls), ICC_BAR_CLASSES };
+		if (!InitCommonControlsEx(&controls)) throw Exception(L"Cannot initialize system speech bubbles.");
+		auto hwnd = GetWindowsForm(GetNativeWindow())->GetWindowHandle();
+		speechBubble = CreateWindowExW(WS_EX_TOPMOST | WS_EX_NOACTIVATE, TOOLTIPS_CLASSW, nullptr,
+			WS_POPUP | TTS_BALLOON | TTS_ALWAYSTIP | TTS_NOPREFIX,
+			CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
+			hwnd, nullptr, GetModuleHandleW(nullptr), nullptr);
+		if (!speechBubble) throw Exception(L"Cannot create system speech bubble.");
+		speechTool.cbSize = sizeof(speechTool);
+		speechTool.uFlags = TTF_IDISHWND | TTF_TRACK | TTF_ABSOLUTE;
+		speechTool.hwnd = hwnd;
+		speechTool.uId = reinterpret_cast<UINT_PTR>(hwnd);
+		static wchar_t greeting[] = L"Hello, world!";
+		speechTool.lpszText = greeting;
+		if (!SendMessageW(speechBubble, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&speechTool)))
+		{
+			throw Exception(L"Cannot set system speech bubble text.");
+		}
+		SendMessageW(speechBubble, TTM_TRACKACTIVATE, TRUE, reinterpret_cast<LPARAM>(&speechTool));
+		UpdateSpeechPosition();
+	}
 
 	void OnLeftButtonDown(GuiGraphicsComposition* sender, GuiMouseEventArgs& arguments)
 	{
@@ -75,6 +128,13 @@ private:
 			arguments.handled = true;
 			contextMenu->ShowPopup(this, Point(arguments.x, arguments.y));
 		}
+	}
+
+protected:
+	void Moved() override
+	{
+		fatfish::ui::FairyWindow::Moved();
+		UpdateSpeechPosition();
 	}
 
 public:
@@ -125,6 +185,7 @@ public:
 		events->mouseDown.AttachMethod(this, &FairyDesktopWindow::OnLeftButtonDown);
 		events->mouseMove.AttachMethod(this, &FairyDesktopWindow::OnMouseMove);
 		events->mouseUp.AttachMethod(this, &FairyDesktopWindow::OnMouseUp);
+		WindowOpened.AttachMethod(this, &FairyDesktopWindow::OnWindowOpened);
 		lastFrameTime = GetTickCount64();
 		GetCurrentController()->CallbackService()->InstallListener(this);
 	}
@@ -132,6 +193,7 @@ public:
 	~FairyDesktopWindow()
 	{
 		GetCurrentController()->CallbackService()->UninstallListener(this);
+		if (speechBubble) DestroyWindow(speechBubble);
 	}
 };
 

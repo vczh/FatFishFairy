@@ -189,7 +189,7 @@ CONTENT
 - Offline `UnitTest` verification must use synthetic model responses and temporary directories without reading real credentials, capturing the desktop, or making network requests. Cover memory safety, configuration validation, completion streaming, response formatting, error feedback, and multi-round agent execution.
 - Offline verification must cover multiple `speak` calls within one response and across follow-ups for both agents, complete vision-to-fairy forwarding, per-round result isolation, and an empty fairy `speak`.
 - For platform integration verification, run `REPO-ROOT/FatFish/UnitTest/Invoke.ps1` in PowerShell 7 after building `FatFishCli`. This opt-in test captures the desktop and uses only a local loopback fixture implemented by `Server.ps1` in the same folder.
-- For desktop-window integration, run `FatFish/UnitTest/Invoke-Fairy.ps1` in PowerShell 7. It uses a temporary executable/theme/config layout, verifies transparency, animation, dragging, persistence and menu exit, and never copies credentials. It moves the mouse during the test and restores the pointer afterwards.
+- For desktop-window integration, run `FatFish/UnitTest/Invoke-Fairy.ps1` in PowerShell 7. It uses a temporary executable/theme/config layout, verifies transparency, animation, the startup balloon and its movement, dragging, persistence and menu exit, and never copies credentials. It moves the mouse during the test and restores the pointer afterwards.
 - Verification must include 10 consecutive successful `ENTER` rounds in `FatFishCli`, using the configured real models in one running process.
 - Each round must finish the vision agent followed by the fairy agent successfully. After all 10 rounds, press `ESC` and verify a clean exit.
 - If any round fails, fix the problem and restart the 10-round verification before reporting completion.
@@ -208,6 +208,7 @@ The background should be #00FF00 so that when a png renders on it, the backgroun
 ### Behavior
 
 The main window is always top-most.
+On startup, show `Hello, world!` in a native Win32 tracking balloon tooltip (`TOOLTIPS_CLASSW`, `TTS_BALLOON`, `TTF_TRACK | TTF_ABSOLUTE`) centered just above the window. Keep it visible until the window closes and update its screen position with `TTM_TRACKPOSITION` from the GacUI `Moved()` callback, calling the base implementation first. Create and activate it when `WindowOpened` fires before measuring its complete window bounds with `GetWindowRect` (including the stem), then clamp placement to the related monitor's work area. Own and destroy its `HWND` in `FairyDesktopWindow`. The executable opts into common controls v6 for system visual styles and the current `TOOLINFO` layout. Do not use a polling timer for bubble positioning.
 Dragging the main window using left button moves the window. Remember the local cursor position on left `mouseDown`; on `mouseMove`, move the current native bounds by the converted difference from that fixed anchor. GacUI handles capture automatically. Save the position on left `mouseUp`; do not initiate native caption dragging or manage capture manually.
 Right click the main window shows a menu organized as below:
 - `退出`: Exit the application.

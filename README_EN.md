@@ -98,6 +98,7 @@ The directory contains `FatFishFairy.exe`, `FatFishCli.exe`, and `UnitTest.exe`.
 ```
 
 - Displays a 384×384 transparent, frameless character window that stays on top.
+- Shows a system balloon saying “Hello, world!” above the window at startup. It follows the window and stays visible until the application closes; its placement adjusts near screen edges to keep it visible.
 - Hold the left mouse button on the character to drag it. Releasing the button saves its position, which is restored on the next launch.
 - Right-click to open the menu and select “退出” (Exit) to close the application.
 - Uses the first theme in `themes/theme.json`, picks an animation at random, and plays its complete sequence three times at one frame per second before randomly choosing the next animation.
@@ -115,7 +116,7 @@ The window position is saved in `env/config.json`, which normally needs no manua
 
 A missing file or coordinate defaults to zero. Negative coordinates on other monitors are supported. Dragging creates or updates the file while preserving other fields; Git ignores this file. Invalid configuration, invalid coordinates, or missing or invalid theme images cause an error.
 
-The desktop window currently only plays animations; it does not automatically capture the screen or call models. Use the CLI below for screen observation and model responses.
+The desktop window currently plays animations and displays a fixed startup greeting; it does not automatically capture the screen or call models. Use the CLI below for screen observation and model responses.
 
 ## Use FatFishCli
 
@@ -178,7 +179,7 @@ After building the corresponding applications, run these in PowerShell 7:
 # CLI: real screen capture, PNG encoding, local HTTP requests, and memory writes
 & ./FatFish/UnitTest/Invoke.ps1 -Configuration Debug -Platform x64
 
-# Desktop window: transparency, topmost behavior, animation, dragging, position restore, and menu exit
+# Desktop window: transparency, topmost behavior, animation, balloon tracking, dragging, position restore, and menu exit
 & ./FatFish/UnitTest/Invoke-Fairy.ps1 -Configuration Debug -Platform x64
 ```
 

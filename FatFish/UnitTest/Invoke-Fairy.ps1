@@ -35,6 +35,7 @@ namespace FatFishFairySmoke
     public class Window
     {
         public IntPtr Handle;
+        public IntPtr Owner;
         public string Title;
         public string ClassName;
         public int X, Y, Width, Height, ClientWidth, ClientHeight;
@@ -60,6 +61,7 @@ namespace FatFishFairySmoke
         [DllImport("user32.dll")] private static extern bool EnumChildWindows(IntPtr parent, EnumProc callback, IntPtr argument);
         [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
         [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr window);
+        [DllImport("user32.dll")] private static extern IntPtr GetWindow(IntPtr window, uint command);
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowText(IntPtr window, StringBuilder text, int capacity);
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(IntPtr window, StringBuilder text, int capacity);
         [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr window, out Rect rect);
@@ -70,6 +72,8 @@ namespace FatFishFairySmoke
         [DllImport("user32.dll")] private static extern bool PrintWindow(IntPtr window, IntPtr dc, uint flags);
         [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
         [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern IntPtr SendMessageTimeout(IntPtr window, uint message, IntPtr wParam, StringBuilder text, uint flags, uint timeout, out IntPtr result);
+        [DllImport("user32.dll", SetLastError = true)] public static extern bool SetWindowPos(IntPtr window, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
         [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr context);
         [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr window);
         [DllImport("user32.dll")] public static extern bool GetCursorPos(out Point point);
@@ -84,6 +88,16 @@ namespace FatFishFairySmoke
             return text.ToString();
         }
 
+        public static string ControlText(IntPtr window)
+        {
+            var text = new StringBuilder(2048);
+            IntPtr result;
+            // WM_GETTEXT is marshalled across processes by Windows; tooltip-private messages are not.
+            if (SendMessageTimeout(window, 0x000D, new IntPtr(text.Capacity), text, 2, 1000, out result) == IntPtr.Zero)
+                throw new InvalidOperationException("Cannot read the greeting balloon text.");
+            return text.ToString();
+        }
+
         public static Window Describe(IntPtr handle)
         {
             Rect bounds, client;
@@ -93,7 +107,7 @@ namespace FatFishFairySmoke
             uint key, flags;
             bool attributes = GetLayeredWindowAttributes(handle, out key, out alpha, out flags);
             return new Window {
-                Handle = handle, Title = Text(handle, false), ClassName = Text(handle, true),
+                Handle = handle, Owner = GetWindow(handle, 4), Title = Text(handle, false), ClassName = Text(handle, true),
                 X = bounds.Left, Y = bounds.Top, Width = bounds.Right - bounds.Left, Height = bounds.Bottom - bounds.Top,
                 ClientWidth = client.Right - client.Left, ClientHeight = client.Bottom - client.Top,
                 Style = IntPtr.Size == 8 ? GetWindowLongPtr64(handle, -16).ToInt64() : GetWindowLong32(handle, -16),
@@ -190,7 +204,7 @@ function Get-TestWindows([switch]$AllowExit) {
 
 function Wait-MainWindow {
   for ($attempt = 0; $attempt -lt 100; $attempt++) {
-    $windows = @(Get-TestWindows | Where-Object { $_.Width -ge 300 -and $_.Height -ge 300 })
+    $windows = @(Get-TestWindows | Where-Object { $_.ClassName -eq 'VczhWindow' -and $_.Width -ge 300 -and $_.Height -ge 300 })
     if ($windows.Count -eq 1) { return $windows[0] }
     Start-Sleep -Milliseconds 100
   }
@@ -206,13 +220,40 @@ function Assert-Window($window, [int]$expectedX, [int]$expectedY) {
   if ($window.X -ne $expectedX -or $window.Y -ne $expectedY) { throw "Expected position ($expectedX, $expectedY), received ($($window.X), $($window.Y))." }
 }
 
+function Assert-Greeting($mainWindow) {
+  $balloon = $null
+  for ($attempt = 0; $attempt -lt 50; $attempt++) {
+    $balloons = @(Get-TestWindows | Where-Object { $_.ClassName -eq 'tooltips_class32' })
+    if ($balloons.Count -eq 1) { $balloon = $balloons[0]; break }
+    Start-Sleep -Milliseconds 100
+  }
+  if ($null -eq $balloon) { throw 'Expected exactly one visible native greeting balloon.' }
+  if ([FatFishFairySmoke.Native]::ControlText($balloon.Handle) -cne 'Hello, world!') { throw 'The native greeting balloon did not display Hello, world!.' }
+  if (($balloon.Style -band 0x40) -eq 0) { throw 'The greeting tooltip must use the system balloon style.' }
+  if (($balloon.ExtendedStyle -band 8) -eq 0 -or $balloon.Owner -ne $mainWindow.Handle) { throw 'The greeting balloon must be topmost and owned by the fairy window.' }
+  $gap = $mainWindow.Y - ($balloon.Y + $balloon.Height)
+  if ($gap -lt -2 -or $gap -gt 24 -or $balloon.Width -le 0 -or $balloon.Height -le 0) {
+    throw "The greeting balloon must sit just above the fairy: balloon ($($balloon.X), $($balloon.Y), $($balloon.Width), $($balloon.Height)), fairy ($($mainWindow.X), $($mainWindow.Y))."
+  }
+  if ($balloon.X -ge ($mainWindow.X + $mainWindow.Width) -or ($balloon.X + $balloon.Width) -le $mainWindow.X) { throw 'The greeting balloon must overlap the fairy horizontally.' }
+  return $balloon
+}
+
+function Assert-GreetingMoved($beforeMain, $beforeBalloon, $afterMain) {
+  $afterBalloon = Assert-Greeting $afterMain
+  if (($afterBalloon.X - $beforeBalloon.X) -ne ($afterMain.X - $beforeMain.X) -or ($afterBalloon.Y - $beforeBalloon.Y) -ne ($afterMain.Y - $beforeMain.Y)) {
+    throw 'The greeting balloon did not follow the fairy window movement.'
+  }
+  return $afterBalloon
+}
+
 function Close-ThroughMenu($mainWindow) {
   $location = [FatFishFairySmoke.Native]::Location(192, 192)
   [void][FatFishFairySmoke.Native]::SendMessage($mainWindow.Handle, 0x0204, [IntPtr]2, $location)
   [void][FatFishFairySmoke.Native]::SendMessage($mainWindow.Handle, 0x0205, [IntPtr]::Zero, $location)
   $menu = $null
   for ($attempt = 0; $attempt -lt 50; $attempt++) {
-    $popups = @(Get-TestWindows | Where-Object { $_.Handle -ne $mainWindow.Handle -and $_.Width -gt 0 -and $_.Height -gt 0 })
+    $popups = @(Get-TestWindows | Where-Object { $_.Handle -ne $mainWindow.Handle -and $_.ClassName -eq $mainWindow.ClassName -and $_.Width -gt 0 -and $_.Height -gt 0 })
     if ($popups.Count -eq 1) { $menu = $popups[0]; break }
     Start-Sleep -Milliseconds 100
   }
@@ -240,8 +281,12 @@ try {
   $application = Start-Process -FilePath (Join-Path $fixtureOutput 'FatFishFairy.exe') -WorkingDirectory $env:SystemRoot -WindowStyle Hidden -PassThru
   $main = Wait-MainWindow
   Assert-Window $main 123 91
+  $greeting = Assert-Greeting $main
   Start-Sleep -Milliseconds 200
   $frame = [FatFishFairySmoke.Native]::Capture($main.Handle, $ScreenshotPath)
+  if (-not [string]::IsNullOrEmpty($ScreenshotPath)) {
+    [void][FatFishFairySmoke.Native]::Capture($greeting.Handle, [IO.Path]::ChangeExtension($ScreenshotPath, 'balloon.png'))
+  }
   if ($frame.Colors -lt 64 -or $frame.OpaquePixels -lt 1000) { throw 'The fairy window did not render a character image.' }
   $hashes = [Collections.Generic.HashSet[string]]::new()
   [void]$hashes.Add($frame.Hash)
@@ -271,6 +316,8 @@ try {
   Start-Sleep -Milliseconds 150
   if (-not [FatFishFairySmoke.Native]::SetCursorPos(($click.X + 47), ($click.Y + 31))) { throw "Cannot move mouse while dragging: Win32 error $([Runtime.InteropServices.Marshal]::GetLastWin32Error())." }
   Start-Sleep -Milliseconds 200
+  $dragged = [FatFishFairySmoke.Native]::Describe($main.Handle)
+  [void](Assert-GreetingMoved $main $greeting $dragged)
   [FatFishFairySmoke.Native]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
   Start-Sleep -Milliseconds 300
   [void](Get-TestWindows)
@@ -278,12 +325,19 @@ try {
   if ($moved.X -eq $main.X -and $moved.Y -eq $main.Y) { throw 'Dragging the visible character did not move the window.' }
   $saved = [IO.File]::ReadAllText($configPath) | ConvertFrom-Json
   Assert-Window $moved $saved.windowX $saved.windowY
-  Close-ThroughMenu $moved
-  Write-Output 'Left drag saved the new window position; right-click exit completed with code 0.'
+  $movedGreeting = Assert-GreetingMoved $main $greeting $moved
+  if (-not [FatFishFairySmoke.Native]::SetWindowPos($moved.Handle, [IntPtr]::Zero, ($moved.X + 29), ($moved.Y + 41), 0, 0, 0x15)) { throw "Cannot move the fairy window through SetWindowPos: Win32 error $([Runtime.InteropServices.Marshal]::GetLastWin32Error())." }
+  Start-Sleep -Milliseconds 200
+  $positioned = [FatFishFairySmoke.Native]::Describe($moved.Handle)
+  Assert-Window $positioned ($moved.X + 29) ($moved.Y + 41)
+  [void](Assert-GreetingMoved $moved $movedGreeting $positioned)
+  Close-ThroughMenu $positioned
+  Write-Output 'Native Hello, world! balloon appeared above the fairy and followed live dragging and SetWindowPos; drag persistence and menu exit passed.'
 
   $application = Start-Process -FilePath (Join-Path $fixtureOutput 'FatFishFairy.exe') -WorkingDirectory $env:SystemRoot -WindowStyle Hidden -PassThru
   $restarted = Wait-MainWindow
   Assert-Window $restarted $saved.windowX $saved.windowY
+  [void](Assert-Greeting $restarted)
   Close-ThroughMenu $restarted
   Write-Output 'Restart restored the dragged position from the isolated env folder; second menu exit completed with code 0.'
 } catch {
