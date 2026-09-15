@@ -280,7 +280,7 @@ namespace FatFishFairySmoke
                 }
                 frame.BottomGap = window.Height - frame.Bottom - 1;
                 if (frame.SkyBluePixels < 4 || frame.Left < 3 || frame.Left > 24
-                    || frame.BottomGap < 2 || frame.BottomGap > 24 || frame.Bottom - frame.Top < 5)
+                    || frame.BottomGap < 2 || frame.BottomGap > 24 || frame.Bottom - frame.Top < 3)
                     throw new InvalidOperationException("Expected skyblue progress text inset near the fairy window's lower-left corner.");
                 using (var hash = SHA256.Create()) frame.Hash = BitConverter.ToString(hash.ComputeHash(mask));
                 if (!String.IsNullOrEmpty(path))

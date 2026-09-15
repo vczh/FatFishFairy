@@ -208,6 +208,8 @@ Tests use synthetic model responses and temporary directories without reading re
 
 ### Local integration tests
 
+Keep the Windows desktop visible and unlocked during integration tests and real-model verification. If screen capture is denied, for example with `BitBlt failed (Windows error 5)`, check the current desktop session before retrying.
+
 After building the corresponding applications, run these in PowerShell 7:
 
 ```powershell

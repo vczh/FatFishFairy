@@ -210,6 +210,8 @@ Pop-Location
 
 ### 本地集成测试
 
+运行集成测试和真实模型验证时，请保持 Windows 桌面可见且已解锁。若屏幕捕获被拒绝，例如出现 `BitBlt failed (Windows error 5)`，先检查当前桌面会话，再重试。
+
 构建对应程序后，在 PowerShell 7 中运行：
 
 ```powershell
