@@ -112,7 +112,9 @@ Two included themes provide 20 animations with 70 frames in total. Switch betwee
 - **萝莉小妹抖** (Chibi Maid): a chibi character with 10 animations and 34 frames, featuring coffee, homework, manga, sleeping, playing, programming, drawing, and transformation into a whale.
 - **长大的妹抖** (Grown Maid): a character with normal adult proportions, with 10 animations and 36 frames, featuring coffee, phone browsing, sleeping, programming, drawing, teaching, and transformations into a whale-armored warrior and a whale sailor outfit.
 
-The original personality file has moved unchanged to `themes/loli_maid/Character.md`. Grown Maid currently uses this fallback because it has no separate personality file. `env/Character.md` is no longer used. An existing personality file that is empty or unreadable causes an error; the desktop application retries after the file is corrected.
+Chibi Maid uses the original food-loving, work-shy, teasing tsundere personality in `themes/loli_maid/Character.md`. Grown Maid uses the independent personality in `themes/grown_maid/Character.md`: a knowledgeable, gentle and thoughtful maid with an older-sister manner who often shows concern and encouragement, with a slightly exaggerated anime-style delivery. She refers to herself only as “我” (I) and addresses the user only as “主人” (Master), without inventing nicknames. Select “主题 → 长大的妹抖” (Theme → Grown Maid) in the right-click menu to use it.
+
+`env/Character.md` is no longer used. An existing personality file that is empty or unreadable causes an error; the desktop application retries after the file is corrected.
 
 The window position and selected theme are saved in `env/config.json`, which normally needs no manual setup. You can also edit it while the application is closed:
 

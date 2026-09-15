@@ -76,6 +76,8 @@ In `REPO-ROOT/env` these shared prompt files are submitted to agents accordingly
 
 The fairy's character prompt is stored in `REPO-ROOT/themes/<theme>/Character.md`. The original prompt is preserved in `themes/loli_maid/Character.md`; `env/Character.md` is no longer used.
 
+`themes/grown_maid/Character.md` provides the grown blue whale maid's independent Chinese personality: a knowledgeable, gentle and encouraging adult with a playful anime-style delivery. She refers to herself only as `我` and addresses the user only as `主人`, without nicknames, including after theme switches. Its source research and design rationale are in `themes/grown_maid/Character.research.md`, which is documentation and must not be loaded as a character prompt.
+
 **IMPORTANT**: All prompt files listed here should be in Chinese. Except `Character.md`, all files could be modified during development.
 
 ### the Vision
