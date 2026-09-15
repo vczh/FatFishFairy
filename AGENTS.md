@@ -215,6 +215,10 @@ The main window is always top-most.
 On startup, show `Hello, world!` in a native Win32 tracking balloon tooltip (`TOOLTIPS_CLASSW`, `TTS_BALLOON`, `TTF_TRACK`) just above the window, with its stem pointing down at the window's top center. Keep it visible until the window closes and update its screen position from the GacUI `Moved()` callback, calling the base implementation first. Create and activate it when `WindowOpened` fires. Windows chooses stem direction automatically: use `TTM_TRACKPOSITION` at a point inside the related monitor's bottom edge to obtain its above-target layout, then measure the complete window with `GetWindowRect` and the stem's horizontal offset from that target. Cache the layout target to avoid moving the tooltip back to the monitor edge during ordinary dragging; use `SetWindowPos` to move the complete native shape above the fairy and clamp it to the monitor's work area. Use the first screen if the fairy is wholly off-screen. Do not use `TTF_ABSOLUTE`, which leaves the stem pointing upward when the whole balloon is placed above the fairy. Own and destroy its `HWND` in `FairyDesktopWindow`. The executable opts into common controls v6 for system visual styles and the current `TOOLINFO` layout. Do not use a polling timer for bubble positioning. The desktop integration test must inspect the balloon's native window region to verify its downward stem and target, as window bounds alone cannot detect a reversed pointer.
 Dragging the main window using left button moves the window. Remember the local cursor position on left `mouseDown`; on `mouseMove`, move the current native bounds by the converted difference from that fixed anchor. GacUI handles capture automatically. Save the position on left `mouseUp`; do not initiate native caption dragging or manage capture manually.
 Right click the main window shows a menu organized as below:
+- `主题`: A menu placeholder:
+  - After loading the app, all themes must be filled to its sub menu in the listed order, menu texts are theme names instead of theme keys.
+  - When the user switch to another, it should be written to the `selectedTheme` key in `config.json`.
+  - `selectedTheme` should be read to set the current theme, but when this key is missing or the specified theme does not exist, use the first one as default.
 - `退出`: Exit the application.
 
 Define the named `contextMenu` ToolstripMenu component and its exit action in `UI/Resource.xml`. C++ only opens that generated component in response to right-click.
@@ -223,7 +227,8 @@ Define the named `contextMenu` ToolstripMenu component and its exit action in `U
 ```JSON
 {
   "windowX": 0,
-  "windowY": 0
+  "windowY": 0,
+  "selectedTheme": "loli_maid"
 }
 ```
 This file defines the initial location of the main window. When stopping dragging the main window, this file should be updated to reflect the current location, therefore it is remembered and used at the next startup.
