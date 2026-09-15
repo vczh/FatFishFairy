@@ -13,13 +13,13 @@ public static class SmokeDpi {
 [void][SmokeDpi]::SetThreadDpiAwarenessContext([IntPtr]::new(-4))
 $listener = [System.Net.HttpListener]::new()
 $listener.Prefixes.Add("http://127.0.0.1:$Port/")
-$report = [ordered]@{ passed = $false; posts = 0; anonymousGets = 0; monitors = @(); toolReplies = 0; error = '' }
+$report = [ordered]@{ passed = $false; posts = 0; anonymousGets = 0; monitors = @(); toolReplies = 0; contextOverflows = 0; overflowRetries = 0; error = '' }
 function Assert-Smoke([bool]$Condition, [string]$Message) {
   if (-not $Condition) { throw ('Smoke assertion: ' + $Message) }
 }
-function Send-Json($Context, $Object) {
+function Send-Json($Context, $Object, [int]$StatusCode = 200) {
   $bytes = [Text.Encoding]::UTF8.GetBytes(($Object | ConvertTo-Json -Depth 30 -Compress))
-  $Context.Response.StatusCode = 200
+  $Context.Response.StatusCode = $StatusCode
   $Context.Response.ContentType = 'application/json; charset=utf-8'
   $Context.Response.ContentLength64 = $bytes.Length
   $Context.Response.OutputStream.Write($bytes, 0, $bytes.Length)
@@ -56,7 +56,7 @@ try {
   $listener.Start()
   [IO.File]::WriteAllText((Join-Path $FixtureRoot 'ready'), 'ready')
   $screenCount = [System.Windows.Forms.Screen]::AllScreens.Count
-  while ($report.posts -lt 4) {
+  while ($report.posts -lt 5) {
     $pending = $listener.GetContextAsync()
     if (-not $pending.Wait(120000)) { throw 'Timed out waiting for the local fixture request.' }
     $context = $pending.Result
@@ -133,11 +133,24 @@ try {
         }
       }
       $report.toolReplies = $replies.Count
-      Send-Completion $context @{ choices = @(@{ finish_reason = 'stop'; message = @{ role = 'assistant'; content = '' } }) }
+      if ($report.posts -eq 4) {
+        # This --once process has no completed fairy rounds to trim. An actual
+        # HTTP error must retry the active exchange unchanged, retaining its
+        # completed tools and speech instead of replaying either of them.
+        $retryPayload = $payload | ConvertTo-Json -Depth 100 -Compress
+        Assert-Smoke ($payload.tool_choice -ceq 'auto') 'The fairy speech must remain submitted before recovery.'
+        $report.contextOverflows++
+        Send-Json $context @{ error = @{ code = 'context_length_exceeded'; type = 'invalid_request_error'; message = 'This request exceeds the maximum context length.' } } 400
+      } else {
+        Assert-Smoke (($payload | ConvertTo-Json -Depth 100 -Compress) -ceq $retryPayload) 'Context overflow recovery changed the active messages, observation timestamp or speech state.'
+        $report.overflowRetries++
+        Send-Completion $context @{ choices = @(@{ finish_reason = 'stop'; message = @{ role = 'assistant'; content = '' } }) }
+      }
     }
     $payload = $null
   }
   Assert-Smoke ($report.anonymousGets -eq 1) 'Expected exactly one anonymous GET.'
+  Assert-Smoke ($report.contextOverflows -eq 1 -and $report.overflowRetries -eq 1) 'Expected one HTTP context overflow and one fairy retry.'
   $memory = [IO.File]::ReadAllText((Join-Path $FixtureRoot 'memory/integration/result.md'), [Text.Encoding]::UTF8)
   Assert-Smoke ($memory -eq '真实平台集成测试通过。') 'Memory content did not persist correctly.'
   $report.passed = $true

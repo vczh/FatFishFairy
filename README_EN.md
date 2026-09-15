@@ -168,9 +168,20 @@ Screen observation text
 ****************
 ```
 
-Other tool calls and ordinary responses appear as `Vision> JSON` or `Fairy> JSON` for diagnostics. Network or configuration errors terminate the CLI.
+Other tool calls and ordinary responses appear as `Vision> JSON` or `Fairy> JSON` for diagnostics. Network or configuration errors terminate the CLI. An oversized fairy conversation first follows the recovery steps below; if recovery fails, the interactive CLI remains available for another ENTER.
 
 Memory files are saved in `memory` and reloaded after a restart; the full conversation lasts only for the current process. The models' file tools can access only the memory directory, which Git ignores. See [env/Tools.md](env/Tools.md) for tool descriptions.
+
+## When the conversation is too long
+
+Both applications recover automatically when the fairy model explicitly reports that the request exceeds its context limit. Recovery uses the number of completed historical rounds present at the first overflow in the current round. It removes the oldest whole rounds, keeping each observation, its replies, and its tool results together:
+
+1. On the first overflow, remove the oldest third of historical rounds, rounding the count up, then retry.
+2. On the second overflow, remove more old rounds until two thirds of the original count have been removed in total, rounding up, then retry.
+3. On the third overflow, clear the fairy conversation, including the current tool exchanges and unfinished speech, and request a new fairy response using only this round's original observation.
+4. If a fourth overflow occurs, end the round. The desktop application displays the error, waits one second, then captures the screen and starts the next round. The interactive CLI waits for another ENTER; `--once` exits cleanly with a nonzero status.
+
+The first three retries preserve the complete original observation and timestamp without rerunning vision. The first two also retain the current round's completed tool exchanges and speech to avoid executing them again; the third restarts the fairy response. Saved memories in `memory` and existing speech entries in `env/history.md` remain intact. This recovery applies only to fairy context-limit errors; other errors keep their existing behavior.
 
 ## Test
 
@@ -184,21 +195,21 @@ Push-Location FatFish
 Pop-Location
 ```
 
-Tests use synthetic model responses and temporary directories without reading real credentials, capturing the screen, or accessing the network. They cover memory file safety, configuration, streaming responses, output formatting, error feedback, multiple model rounds, window position, theme order, theme selection and fallback, fresh fairy sessions after theme switching with memories retained, settings persistence, animation sequencing, and speech history appending, timestamps, and write failures. The complete suite should pass, with no memory leaks in Debug builds.
+Tests use synthetic model responses and temporary directories without reading real credentials, capturing the screen, or accessing the network. They cover memory file safety, configuration, streaming responses, output formatting, error feedback, multiple model rounds, staged history removal and retries after context overflows, window position, theme order, theme selection and fallback, fresh fairy sessions after theme switching with memories retained, settings persistence, animation sequencing, and speech history appending, timestamps, and write failures. The complete suite should pass, with no memory leaks in Debug builds.
 
 ### Local integration tests
 
 After building the corresponding applications, run these in PowerShell 7:
 
 ```powershell
-# CLI: real screen capture, PNG encoding, local HTTP requests, and memory writes
+# CLI: real screen capture, PNG encoding, local HTTP requests, memory writes, and context overflow retry
 & ./FatFish/UnitTest/Invoke.ps1 -Configuration Debug -Platform x64
 
 # Desktop window: animation and interaction, continuous model calls, bubble updates, error recovery, and exit during requests
 & ./FatFish/UnitTest/Invoke-Fairy.ps1 -Configuration Debug -Platform x64
 ```
 
-Both integration tests send monitor screenshots only to a local loopback test server. They do not save those screenshots or access a real model service. The desktop integration test uses temporary application, theme, configuration, and memory directories to check transparency, topmost behavior, animation, balloon tracking, dragging and position restore, theme menu order, saved switching, startup restoration, and fallback for unknown theme keys. When switching themes, it verifies that the current round keeps its original personality and the next round starts with an empty fairy conversation. It also checks continuous model calls, updated and silent speech, error display and recovery, and menu exit while a request is pending. Tests do not read real configuration or credentials. Add `-ScreenshotPath PATH` to save test window, menu, and bubble screenshots for visual checks of the Chinese theme names, selection mark, and complete speech. The actual on-screen capture of long speech ends in `.speech-desktop.png`. The test moves the mouse and restores the pointer afterward.
+Both integration tests send monitor screenshots only to a local loopback test server. They do not save those screenshots or access a real model service. The CLI test also returns a real HTTP 400 context-limit error and verifies that the fairy retries with its current tool results retained, without repeating tools or speech. The desktop integration test uses temporary application, theme, configuration, and memory directories to check transparency, topmost behavior, animation, balloon tracking, dragging and position restore, theme menu order, saved switching, startup restoration, and fallback for unknown theme keys. When switching themes, it verifies that the current round keeps its original personality and the next round starts with an empty fairy conversation. It also checks continuous model calls, updated and silent speech, error display and recovery, and menu exit while a request is pending. Tests do not read real configuration or credentials. Add `-ScreenshotPath PATH` to save test window, menu, and bubble screenshots for visual checks of the Chinese theme names, selection mark, and complete speech. The actual on-screen capture of long speech ends in `.speech-desktop.png`. The test moves the mouse and restores the pointer afterward.
 
 ### Real-model verification
 

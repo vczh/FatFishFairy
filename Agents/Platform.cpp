@@ -304,29 +304,55 @@ namespace fatfish
 		DWORD status = 0;
 		DWORD statusSize = sizeof(status);
 		CheckPlatformResult(WinHttpQueryHeaders(request.value, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &status, &statusSize, WINHTTP_NO_HEADER_INDEX), L"WinHttpQueryHeaders");
+		auto readBody = [&](vint maxBytes)
+		{
+			stream::MemoryStream responseStream;
+			while (true)
+			{
+				if (cancellation) cancellation->ThrowIfCancelled();
+				auto remaining = maxBytes - static_cast<vint>(responseStream.Size());
+				auto readSize = remaining < static_cast<vint>(sizeof(request.buffer)) ? static_cast<DWORD>(remaining + 1) : static_cast<DWORD>(sizeof(request.buffer));
+				CheckPlatformResult(WinHttpReadData(request.value, request.buffer, readSize, nullptr), L"WinHttpReadData");
+				request.Wait(WINHTTP_CALLBACK_STATUS_READ_COMPLETE, L"WinHttpReadData", cancellation);
+				auto read = request.bytesRead;
+				if (!read) break;
+				if (responseStream.Size() + read > maxBytes) throw Exception(L"The Chat Completions response exceeds its size limit.");
+				responseStream.Write(request.buffer, read);
+			}
+			HttpResponse response;
+			response.body.Resize((vint)responseStream.Size());
+			responseStream.SeekFromBegin(0);
+			if (response.body.Count()) responseStream.Read(&response.body[0], response.body.Count());
+			WString result;
+			if (!response.TryGetBodyUtf8(result)) throw Exception(L"The Chat Completions response is not UTF-8 text.");
+			return result;
+		};
 		if (status < 200 || status >= 300)
 		{
-			// Never echo a response body: gateways can reflect submitted credentials.
-			throw Exception(L"Chat Completions returned HTTP " + itow(status) + L". Check the endpoint, credentials, and model configuration.");
+			try
+			{
+				// Inspect bounded error metadata internally. Never echo the body:
+				// gateways can reflect submitted credentials or private messages.
+				auto errorBody = readBody(64 * 1024);
+				json::Parser parser;
+				ThrowIfChatCompletionError(ParseJson(errorBody, parser), status);
+			}
+			catch (const OperationCancelled&)
+			{
+				throw;
+			}
+			catch (const ContextLimitExceeded&)
+			{
+				throw;
+			}
+			catch (const Exception&)
+			{
+				// Unrecognized, malformed, oversized and unreadable error bodies
+				// keep the known HTTP status without exposing any response text.
+			}
+			throw ChatCompletionError(L"Chat Completions returned HTTP " + itow(status) + L". Check the endpoint, credentials, and model configuration.");
 		}
-		stream::MemoryStream responseStream;
-		while (true)
-		{
-			if (cancellation) cancellation->ThrowIfCancelled();
-			CheckPlatformResult(WinHttpReadData(request.value, request.buffer, sizeof(request.buffer), nullptr), L"WinHttpReadData");
-			request.Wait(WINHTTP_CALLBACK_STATUS_READ_COMPLETE, L"WinHttpReadData", cancellation);
-			auto read = request.bytesRead;
-			if (!read) break;
-			if (responseStream.Size() + read > 16 * 1024 * 1024) throw Exception(L"The Chat Completions response exceeds 16 MiB.");
-			responseStream.Write(request.buffer, read);
-		}
-		HttpResponse response;
-		response.body.Resize((vint)responseStream.Size());
-		responseStream.SeekFromBegin(0);
-		if (response.body.Count()) responseStream.Read(&response.body[0], response.body.Count());
-		WString result;
-		if (!response.TryGetBodyUtf8(result)) throw Exception(L"The Chat Completions response is not UTF-8 text.");
-		return result;
+		return readBody(16 * 1024 * 1024);
 	}
 
 	WebResponse HttpGet(const WString& url, vint maxCharacters, Ptr<CancellationToken> cancellation)

@@ -13,6 +13,7 @@ int wmain(int argc, wchar_t* argv[])
 	SetConsoleOutputCP(CP_UTF8);
 	Console::Enable();
 	Console::SetTitle(L"FatFishCli");
+	auto exitCode = 0;
 	{
 		auto once = false;
 		WString repository;
@@ -71,7 +72,15 @@ int wmain(int argc, wchar_t* argv[])
 		}));
 		if (once)
 		{
-			application.RunRound();
+			try
+			{
+				application.RunRound();
+			}
+			catch (const FairyContextRecoveryExhausted& error)
+			{
+				Console::WriteLine(L"Fairy round cancelled: " + error.Message());
+				exitCode = 1;
+			}
 		}
 		else
 		{
@@ -87,7 +96,15 @@ int wmain(int argc, wchar_t* argv[])
 				else if (key == L'\r')
 				{
 					Console::WriteLine(L"Observing...");
-					application.RunRound();
+					try
+					{
+						application.RunRound();
+					}
+					catch (const FairyContextRecoveryExhausted& error)
+					{
+						Console::WriteLine(L"Fairy round cancelled: " + error.Message());
+						Console::WriteLine(L"Press ENTER for a new observation, or ESC to exit.");
+					}
 				}
 			}
 		}
@@ -98,5 +115,5 @@ int wmain(int argc, wchar_t* argv[])
 	_CrtSetReportFile(_CRT_WARN, _CRTDBG_FILE_STDERR);
 	if (_CrtDumpMemoryLeaks()) return 1;
 #endif
-	return 0;
+	return exitCode;
 }

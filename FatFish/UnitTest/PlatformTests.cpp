@@ -7,19 +7,95 @@ using namespace vl;
 using namespace vl::filesystem;
 using namespace vl::glr;
 
-namespace
+void ExpectPlatformFailure(const Func<void()>& action)
 {
-	void ExpectPlatformFailure(const Func<void()>& action)
+	TEST_EXCEPTION(action(), Exception, [](const Exception& error)
 	{
-		TEST_EXCEPTION(action(), Exception, [](const Exception& error)
-		{
-			TEST_ASSERT(wcsstr(error.Message().Buffer(), L"test-secret") == nullptr);
-		});
+		TEST_ASSERT(wcsstr(error.Message().Buffer(), L"test-secret") == nullptr);
+	});
+}
+
+void ExpectCompletionRejection(const Func<void()>& action, bool contextLimit)
+{
+	bool rejected = false;
+	try
+	{
+		action();
 	}
+	catch (const ContextLimitExceeded& error)
+	{
+		rejected = true;
+		TEST_ASSERT(contextLimit && error.Message() == L"The model request exceeds the model's context limit.");
+	}
+	catch (const ChatCompletionError& error)
+	{
+		rejected = true;
+		TEST_ASSERT(!contextLimit && error.Message() == L"The model server reported an error.");
+	}
+	TEST_ASSERT(rejected);
 }
 
 TEST_FILE
 {
+	TEST_CASE(L"JSON and streaming server errors classify recognized context overflows without exposing response text")
+	{
+		json::Parser parser;
+		for (auto envelope : {
+			LR"({"error":{"code":"context_length_exceeded","message":"test-secret"}})",
+			LR"({"error":{"type":"Context_Window_Exceeded","code":null,"message":"test-secret"}})",
+			LR"({"error":{"code":"prompt_too_long","message":"test-secret"}})",
+			LR"({"error":{"message":"This model's maximum context length is 4096 tokens. However, you requested 5000 tokens. test-secret"}})",
+			LR"({"object":"error","type":"BadRequestError","code":400,"message":"The input length exceeds the context length: test-secret"})",
+			LR"({"error":"The request exceeds the available context size: test-secret"})",
+			LR"({"error":{"type":"invalid_request_error","message":"Prompt is too long: test-secret"}})"
+		})
+		{
+			ExpectCompletionRejection([&] { ParseChatCompletion(envelope, parser); }, true);
+			ExpectCompletionRejection([&] { ParseChatCompletion(L"event: error\ndata: " + WString(envelope) + L"\n\n", parser); }, true);
+			// No partially accumulated assistant/tool response may escape an errored stream.
+			auto partial = WString(LR"({"choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"pending","type":"function","function":{"name":"speak","arguments":"{\"text\":\"partial\"}"}}]},"finish_reason":null}]})");
+			ExpectCompletionRejection([&] { ParseChatCompletion(L"data: " + partial + L"\n\ndata: " + WString(envelope) + L"\n\n", parser); }, true);
+		}
+	});
+
+	TEST_CASE(L"Other model rejections stay distinct from context and assistant formatting errors")
+	{
+		json::Parser parser;
+		for (auto envelope : {
+			LR"({"error":{"code":"rate_limit_exceeded","message":"test-secret requested more than the maximum context length"}})",
+			LR"({"error":{"type":"server_error","message":"test-secret: context length exceeded"}})",
+			LR"({"error":{"type":"authentication_error","message":"test-secret: prompt too long"}})",
+			LR"({"error":{"code":"max_tokens_exceeded","message":"test-secret: maximum context length exceeded"}})",
+			LR"({"error":{"type":"invalid_request_error","message":"max_tokens must be smaller than the maximum context length: test-secret"}})",
+			LR"({"error":{"message":"test-secret exceeded the tokens per minute quota; prompt too long"}})",
+			LR"({"error":{"message":"test-secret exceeded the maximum output tokens"}})",
+			LR"({"error":{"message":"test-secret: token limit exceeded"}})",
+			LR"({"error":{"message":"test-secret: invalid model"}})",
+			LR"({"error":{"message":["test-secret"],"code":["context_length_exceeded"]}})",
+			LR"({"error":{"message":"test-secret"},"error":{"code":"context_length_exceeded"}})"
+		})
+		{
+			ExpectCompletionRejection([&] { ParseChatCompletion(envelope, parser); }, false);
+			ExpectCompletionRejection([&] { ParseChatCompletion(L"data: " + WString(envelope) + L"\n\n", parser); }, false);
+		}
+		auto completion = ParseChatCompletion(LR"({"error":null,"choices":[{"finish_reason":"length","message":{"role":"assistant","content":"test-secret"}}]})", parser);
+		TEST_ASSERT(GetString(GetField(completion, L"choices").Cast<json::JsonArray>()->items[0], L"finish_reason") == L"length"); // Output truncation is not a context rejection.
+	});
+
+	TEST_CASE(L"HTTP authentication rate and server failures override apparent context errors in their bodies")
+	{
+		json::Parser parser;
+		auto envelope = ParseJson(LR"({"error":{"code":"context_length_exceeded","message":"test-secret: maximum context length exceeded"}})", parser);
+		for (vint status : { 200, 400, 413, 422 })
+		{
+			ExpectCompletionRejection([&] { ThrowIfChatCompletionError(envelope, status); }, true);
+		}
+		for (vint status : { 301, 401, 403, 404, 408, 429, 500, 503 })
+		{
+			ExpectCompletionRejection([&] { ThrowIfChatCompletionError(envelope, status); }, false);
+		}
+	});
+
 	TEST_CASE(L"Cancellation stays signaled and prevents HTTP I/O")
 	{
 		auto cancellation = Ptr(new CancellationToken);

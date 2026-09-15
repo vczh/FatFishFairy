@@ -157,8 +157,449 @@ public:
 	}
 };
 
+class RuntimeContextFixture : public RuntimeWorkerFixture
+{
+public:
+	List<Ptr<json::JsonArray>> fairyRequests;
+	List<Ptr<json::JsonArray>> completedRounds;
+	Func<WString(Ptr<json::JsonNode>, Ptr<json::JsonArray>)> respond;
+	Func<WString(Ptr<json::JsonNode>, Ptr<json::JsonArray>)> visionRespond;
+	Ptr<FairyApplication> application;
+
+	static WString Speech(const WString& text, bool listFiles = false)
+	{
+		auto calls = Ptr(new json::JsonArray);
+		auto add = [&](const WString& id, const WString& name, const WString& arguments)
+		{
+			auto function = Ptr(new json::JsonObject);
+			SetString(function, L"name", name);
+			SetString(function, L"arguments", arguments);
+			auto call = Ptr(new json::JsonObject);
+			SetString(call, L"id", id);
+			SetString(call, L"type", L"function");
+			SetField(call, L"function", function);
+			calls->items.Add(call);
+		};
+		if (listFiles) add(L"list", L"file_list", L"{}");
+		auto arguments = Ptr(new json::JsonObject);
+		SetString(arguments, L"text", text);
+		add(L"say", L"speak", json::JsonToString(arguments));
+		auto message = TextMessage(L"assistant", L"");
+		SetField(message, L"tool_calls", calls);
+		auto choice = Ptr(new json::JsonObject);
+		SetString(choice, L"finish_reason", L"tool_calls");
+		SetField(choice, L"message", message);
+		auto choices = Ptr(new json::JsonArray);
+		choices->items.Add(choice);
+		auto response = Ptr(new json::JsonObject);
+		SetField(response, L"choices", choices);
+		return json::JsonToString(response);
+	}
+
+	static Ptr<json::JsonArray> Tail(Ptr<json::JsonArray> messages, vint first)
+	{
+		auto result = Ptr(new json::JsonArray);
+		for (vint i = first; i < messages->items.Count(); i++) result->items.Add(messages->items[i]);
+		return result;
+	}
+
+	RuntimeContextFixture()
+	{
+		application = Create([this](const WString& body)
+		{
+			requests.Add(body);
+			json::Parser parser;
+			auto request = ParseJson(body, parser);
+			auto messages = GetField(request, L"messages").Cast<json::JsonArray>();
+			if (GetString(request, L"model") == config.visionModel)
+			{
+				if (visionRespond) return visionRespond(request, messages);
+				return messages->items.Count() == 2 ? Speech(L"合成观察 " + itow(captures)) : terminal;
+			}
+			fairyRequests.Add(messages);
+			if (respond) return respond(request, messages);
+			return GetString(messages->items[messages->items.Count() - 1], L"role") == L"user"
+				? Speech(L"历史回应 " + itow(captures), captures % 2 == 0) : terminal;
+		});
+	}
+
+	void Seed(vint count)
+	{
+		for (vint i = 0; i < count; i++)
+		{
+			auto firstRequest = fairyRequests.Count();
+			auto speech = application->RunRound();
+			TEST_ASSERT(speech == L"历史回应 " + itow(captures));
+			auto segment = Tail(fairyRequests[fairyRequests.Count() - 1], fairyRequests[firstRequest]->items.Count() - 1);
+			segment->items.Add(TextMessage(L"assistant", L""));
+			completedRounds.Add(segment);
+		}
+	}
+
+	void AssertRetained(Ptr<json::JsonArray> messages, vint removed, Ptr<json::JsonArray> active)
+	{
+		TEST_ASSERT(GetString(messages->items[0], L"role") == L"system");
+		TEST_ASSERT(GetString(messages->items[0], L"content") == L"工具说明\n\n记忆指引\n\n精灵请求\n\n固定性格");
+		vint index = 1;
+		for (vint round = removed; round < completedRounds.Count(); round++)
+		{
+			for (auto message : completedRounds[round]->items)
+			{
+				TEST_ASSERT(index < messages->items.Count());
+				TEST_ASSERT(json::JsonToString(messages->items[index++]) == json::JsonToString(message));
+			}
+		}
+		for (auto message : active->items)
+		{
+			TEST_ASSERT(index < messages->items.Count());
+			TEST_ASSERT(json::JsonToString(messages->items[index++]) == json::JsonToString(message));
+		}
+		TEST_ASSERT(index == messages->items.Count());
+	}
+};
+
 TEST_FILE
 {
+	TEST_CASE(L"Fairy context recovery removes whole oldest rounds with cumulative upward rounding")
+	{
+		vint firstRemoved[] = { 0, 1, 1, 1, 2, 2, 2, 3 };
+		vint secondRemoved[] = { 0, 1, 2, 2, 3, 4, 4, 5 };
+		for (vint historyCount = 0; historyCount < 8; historyCount++)
+		{
+			for (vint overflows : { 1, 2 })
+			{
+				RuntimeContextFixture fixture;
+				fixture.Seed(historyCount); // Alternating rounds contain different numbers of tool results.
+				vint submissions = 0;
+				Ptr<json::JsonArray> observation;
+				fixture.respond = [&](Ptr<json::JsonNode> request, Ptr<json::JsonArray> messages)
+				{
+					auto attempt = submissions++;
+					if (attempt <= overflows)
+					{
+						if (attempt == 0) observation = RuntimeContextFixture::Tail(messages, messages->items.Count() - 1);
+						auto removed = attempt == 0 ? 0 : attempt == 1 ? firstRemoved[historyCount] : secondRemoved[historyCount];
+						fixture.AssertRetained(messages, removed, observation);
+						TEST_ASSERT(GetString(request, L"tool_choice") == L"required");
+						if (attempt < overflows) throw ContextLimitExceeded();
+						return RuntimeContextFixture::Speech(L"恢复成功");
+					}
+					TEST_ASSERT(GetString(request, L"tool_choice") == L"auto");
+					return fixture.terminal;
+				};
+				TEST_ASSERT(fixture.application->RunRound() == L"恢复成功");
+				TEST_ASSERT(submissions == overflows + 2 && fixture.captures == historyCount + 1);
+			}
+		}
+	});
+
+	TEST_CASE(L"Fairy trimming retains active tool feedback and accumulated speech without replaying tools")
+	{
+		RuntimeContextFixture fixture;
+		fixture.Seed(5);
+		vint submissions = 0;
+		Ptr<json::JsonArray> active;
+		auto memoryFile = fixture.folder.root / L"state" / L"recovery.md";
+		fixture.respond = [&](Ptr<json::JsonNode> request, Ptr<json::JsonArray> messages)
+		{
+			switch (submissions++)
+			{
+			case 0:
+				return WString(LR"({"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","tool_calls":[{"id":"remember","type":"function","function":{"name":"file_write","arguments":"{\"path\":\"recovery.md\",\"content\":\"初次工具写入\"}"}},{"id":"say","type":"function","function":{"name":"speak","arguments":"{\"text\":\"保留前段\"}"}}]}}]})");
+			case 1:
+				active = RuntimeContextFixture::Tail(messages, messages->items.Count() - 4);
+				fixture.AssertRetained(messages, 0, active);
+				TEST_ASSERT(File(memoryFile).ReadAllTextByBom() == L"初次工具写入");
+				TEST_ASSERT(File(memoryFile).WriteAllText(L"工具完成后的外部修改", true, stream::BomEncoder::Utf8));
+				throw ContextLimitExceeded();
+			case 2:
+				fixture.AssertRetained(messages, 2, active);
+				TEST_ASSERT(GetString(request, L"tool_choice") == L"auto");
+				TEST_ASSERT(File(memoryFile).ReadAllTextByBom() == L"工具完成后的外部修改");
+				return RuntimeContextFixture::Speech(L"保留后段", true);
+			case 3:
+				active = RuntimeContextFixture::Tail(messages, messages->items.Count() - 7);
+				fixture.AssertRetained(messages, 2, active);
+				throw ContextLimitExceeded();
+			case 4:
+				fixture.AssertRetained(messages, 4, active); // A successful follow-up must not reset the recovery budget.
+				TEST_ASSERT(GetString(request, L"tool_choice") == L"auto");
+				TEST_ASSERT(File(memoryFile).ReadAllTextByBom() == L"工具完成后的外部修改");
+				return fixture.terminal;
+			default:
+				throw Exception(L"Unexpected replay during context recovery.");
+			}
+		};
+		TEST_ASSERT(fixture.application->RunRound() == L"保留前段\n保留后段");
+		TEST_ASSERT(submissions == 5 && fixture.captures == 6);
+		TEST_ASSERT(File(memoryFile).ReadAllTextByBom() == L"工具完成后的外部修改");
+	});
+
+	TEST_CASE(L"Third fairy overflow restarts the timestamped observation and speech while keeping saved memory")
+	{
+		RuntimeContextFixture fixture;
+		RuntimeTestClock clock;
+		clock.currentTime = DateTime::FromDateTime(2027, 2, 3, 4, 5, 6).osInternal;
+		fixture.Seed(5);
+		vint submissions = 0;
+		Ptr<json::JsonArray> active;
+		WString originalObservation;
+		auto memoryFile = fixture.folder.root / L"state" / L"recovery.md";
+		fixture.respond = [&](Ptr<json::JsonNode> request, Ptr<json::JsonArray> messages)
+		{
+			TEST_ASSERT(clock.localTimeCalls == 6 && fixture.captures == 6);
+			clock.currentTime = clock.Forward(clock.currentTime, 60000);
+			switch (submissions++)
+			{
+			case 0:
+				originalObservation = GetString(messages->items[messages->items.Count() - 1], L"content");
+				TEST_ASSERT(originalObservation == L"当前日期时间是：2027-02-03 04-05-06\n以下是用户所有屏幕的内容：\n合成观察 6");
+				return WString(LR"({"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","tool_calls":[{"id":"remember","type":"function","function":{"name":"file_write","arguments":"{\"path\":\"recovery.md\",\"content\":\"长期记忆\\n保持不变\"}"}},{"id":"say","type":"function","function":{"name":"speak","arguments":"{\"text\":\"应丢弃的发言\"}"}}]}}]})");
+			case 1:
+				active = RuntimeContextFixture::Tail(messages, messages->items.Count() - 4);
+				fixture.AssertRetained(messages, 0, active);
+				throw ContextLimitExceeded();
+			case 2:
+				fixture.AssertRetained(messages, 2, active);
+				throw ContextLimitExceeded();
+			case 3:
+				fixture.AssertRetained(messages, 4, active);
+				throw ContextLimitExceeded();
+			case 4:
+				TEST_ASSERT(messages->items.Count() == 2 && GetString(messages->items[1], L"content") == originalObservation);
+				TEST_ASSERT(GetString(request, L"tool_choice") == L"required");
+				TEST_ASSERT(File(memoryFile).ReadAllTextByBom() == L"长期记忆\n保持不变");
+				return WString(LR"({"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","tool_calls":[{"id":"recall","type":"function","function":{"name":"file_read","arguments":"{\"path\":\"recovery.md\"}"}},{"id":"say","type":"function","function":{"name":"speak","arguments":"{\"text\":\"新会话发言\"}"}}]}}]})");
+			case 5:
+			{
+				TEST_ASSERT(messages->items.Count() == 5 && GetString(messages->items[1], L"content") == originalObservation);
+				TEST_ASSERT(GetString(request, L"tool_choice") == L"auto");
+				json::Parser parser;
+				auto feedback = ParseJson(GetString(messages->items[3], L"content"), parser);
+				TEST_ASSERT(GetString(messages->items[3], L"tool_call_id") == L"recall");
+				TEST_ASSERT(GetString(feedback, L"content") == L"长期记忆\n保持不变");
+				return fixture.terminal;
+			}
+			default:
+				throw Exception(L"Unexpected session restart request.");
+			}
+		};
+		TEST_ASSERT(fixture.application->RunRound() == L"新会话发言");
+		TEST_ASSERT(submissions == 6 && clock.localTimeCalls == 6 && fixture.captures == 6);
+		TEST_ASSERT(File(memoryFile).ReadAllTextByBom() == L"长期记忆\n保持不变");
+	});
+
+	TEST_CASE(L"Fourth fairy overflow fails even after successful reset tools and the next round starts fresh")
+	{
+		RuntimeContextFixture fixture;
+		fixture.Seed(3);
+		vint submissions = 0;
+		fixture.respond = [&](Ptr<json::JsonNode> request, Ptr<json::JsonArray> messages)
+		{
+			auto attempt = submissions++;
+			if (attempt < 3) throw ContextLimitExceeded();
+			if (attempt == 3)
+			{
+				TEST_ASSERT(messages->items.Count() == 2 && GetString(request, L"tool_choice") == L"required");
+				return RuntimeContextFixture::Speech(L"最终仍会失败的发言");
+			}
+			TEST_ASSERT(attempt == 4 && messages->items.Count() == 4);
+			throw ContextLimitExceeded();
+		};
+		TEST_EXCEPTION(fixture.application->RunRound(), ContextLimitExceeded, [](const ContextLimitExceeded&) {});
+		TEST_ASSERT(submissions == 5 && fixture.captures == 4);
+		submissions = 0;
+		fixture.respond = [&](Ptr<json::JsonNode> request, Ptr<json::JsonArray> messages)
+		{
+			if (submissions++ == 0)
+			{
+				TEST_ASSERT(messages->items.Count() == 2 && GetString(request, L"tool_choice") == L"required");
+				TEST_ASSERT(wcsstr(GetString(messages->items[1], L"content").Buffer(), L"合成观察 5"));
+				return RuntimeContextFixture::Speech(L"下一轮成功");
+			}
+			TEST_ASSERT(messages->items.Count() == 4);
+			return fixture.terminal;
+		};
+		TEST_ASSERT(fixture.application->RunRound() == L"下一轮成功");
+		TEST_ASSERT(submissions == 2 && fixture.captures == 5);
+	});
+
+	TEST_CASE(L"A failed fairy round rolls back only its active exchange after history trimming")
+	{
+		RuntimeContextFixture fixture;
+		fixture.Seed(5);
+		vint submissions = 0;
+		fixture.respond = [&](Ptr<json::JsonNode>, Ptr<json::JsonArray>) -> WString
+		{
+			if (submissions++ == 0) throw ContextLimitExceeded();
+			if (submissions == 2) return RuntimeContextFixture::Speech(L"失败轮次中的发言", true);
+			throw Exception(L"Unrelated transport failure after trimming.");
+		};
+		TEST_EXCEPTION(fixture.application->RunRound(), Exception, [](const Exception& error)
+		{
+			TEST_ASSERT(error.Message() == L"Unrelated transport failure after trimming.");
+		});
+		TEST_ASSERT(submissions == 3);
+		submissions = 0;
+		fixture.respond = [&](Ptr<json::JsonNode>, Ptr<json::JsonArray> messages)
+		{
+			if (submissions++ == 0)
+			{
+				auto observation = RuntimeContextFixture::Tail(messages, messages->items.Count() - 1);
+				fixture.AssertRetained(messages, 2, observation);
+				TEST_ASSERT(wcsstr(GetString(observation->items[0], L"content").Buffer(), L"合成观察 7"));
+				return RuntimeContextFixture::Speech(L"保留修剪后的历史");
+			}
+			return fixture.terminal;
+		};
+		TEST_ASSERT(fixture.application->RunRound() == L"保留修剪后的历史");
+		TEST_ASSERT(submissions == 2 && fixture.captures == 7);
+	});
+
+	TEST_CASE(L"Vision context errors and untyped fairy failures do not trigger history recovery")
+	{
+		for (bool visionFailure : { false, true })
+		{
+			RuntimeContextFixture fixture;
+			fixture.Seed(3);
+			vint failedSubmissions = 0;
+			if (visionFailure)
+			{
+				fixture.visionRespond = [&](Ptr<json::JsonNode>, Ptr<json::JsonArray>) -> WString
+				{
+					failedSubmissions++;
+					throw ContextLimitExceeded();
+				};
+				TEST_EXCEPTION(fixture.application->RunRound(), ContextLimitExceeded, [](const ContextLimitExceeded&) {});
+				fixture.visionRespond = {};
+			}
+			else
+			{
+				fixture.respond = [&](Ptr<json::JsonNode>, Ptr<json::JsonArray>) -> WString
+				{
+					failedSubmissions++;
+					throw Exception(L"context_length_exceeded text in an unrelated exception");
+				};
+				TEST_EXCEPTION(fixture.application->RunRound(), Exception, [](const Exception&) {});
+			}
+			TEST_ASSERT(failedSubmissions == 1);
+			vint submissions = 0;
+			fixture.respond = [&](Ptr<json::JsonNode>, Ptr<json::JsonArray> messages)
+			{
+				if (submissions++ == 0)
+				{
+					fixture.AssertRetained(messages, 0, RuntimeContextFixture::Tail(messages, messages->items.Count() - 1));
+					return RuntimeContextFixture::Speech(L"原历史仍在");
+				}
+				return fixture.terminal;
+			};
+			TEST_ASSERT(fixture.application->RunRound() == L"原历史仍在");
+			TEST_ASSERT(submissions == 2 && fixture.captures == 5);
+		}
+	});
+
+	TEST_CASE(L"ResetFairySession clears completed-round bookkeeping before later overflow recovery")
+	{
+		RuntimeContextFixture fixture;
+		fixture.Seed(5);
+		fixture.application->ResetFairySession();
+		fixture.completedRounds.Clear();
+		fixture.Seed(2);
+		vint submissions = 0;
+		Ptr<json::JsonArray> observation;
+		fixture.respond = [&](Ptr<json::JsonNode>, Ptr<json::JsonArray> messages)
+		{
+			switch (submissions++)
+			{
+			case 0:
+				observation = RuntimeContextFixture::Tail(messages, messages->items.Count() - 1);
+				fixture.AssertRetained(messages, 0, observation);
+				throw ContextLimitExceeded();
+			case 1:
+				fixture.AssertRetained(messages, 1, observation);
+				throw ContextLimitExceeded();
+			case 2:
+				fixture.AssertRetained(messages, 2, observation);
+				return RuntimeContextFixture::Speech(L"新主题的新历史");
+			default:
+				return fixture.terminal;
+			}
+		};
+		TEST_ASSERT(fixture.application->RunRound() == L"新主题的新历史");
+		TEST_ASSERT(submissions == 4 && fixture.captures == 8);
+	});
+
+	TEST_CASE(L"JSON and SSE server errors bypass malformed-response feedback and recover only context errors")
+	{
+		for (bool streaming : { false, true })
+		{
+			for (bool contextError : { false, true })
+			{
+				RuntimeContextFixture fixture;
+				fixture.Seed(2);
+				vint submissions = 0;
+				Ptr<json::JsonArray> observation;
+				fixture.respond = [&](Ptr<json::JsonNode>, Ptr<json::JsonArray> messages)
+				{
+					if (submissions++ == 0)
+					{
+						observation = RuntimeContextFixture::Tail(messages, messages->items.Count() - 1);
+						auto error = contextError
+							? WString(LR"({"error":{"code":"context_length_exceeded","message":"Synthetic context limit."}})")
+							: WString(LR"({"error":{"code":"insufficient_quota","message":"Synthetic quota failure."}})");
+						return streaming ? L"data: " + error + L"\n\n" : error;
+					}
+					TEST_ASSERT(contextError);
+					if (submissions == 2)
+					{
+						fixture.AssertRetained(messages, 1, observation); // No synthetic correction message enters the active exchange.
+						return RuntimeContextFixture::Speech(L"服务端溢出恢复");
+					}
+					return fixture.terminal;
+				};
+				if (contextError)
+				{
+					TEST_ASSERT(fixture.application->RunRound() == L"服务端溢出恢复");
+					TEST_ASSERT(submissions == 3);
+				}
+				else
+				{
+					TEST_EXCEPTION(fixture.application->RunRound(), ChatCompletionError, [](const ChatCompletionError&) {});
+					TEST_ASSERT(submissions == 1);
+				}
+				TEST_ASSERT(fixture.captures == 3);
+			}
+		}
+	});
+
+	TEST_CASE(L"Third overflow on the last completion step gives the fresh fairy session room to finish")
+	{
+		RuntimeContextFixture fixture;
+		vint submissions = 0;
+		WString observation;
+		fixture.respond = [&](Ptr<json::JsonNode> request, Ptr<json::JsonArray> messages)
+		{
+			auto attempt = submissions++;
+			if (attempt == 0) observation = GetString(messages->items[1], L"content");
+			if (attempt < 23) return RuntimeContextFixture::Speech(L"旧会话发言");
+			if (attempt < 26)
+			{
+				TEST_ASSERT(messages->items.Count() == 48 && GetString(request, L"tool_choice") == L"auto");
+				throw ContextLimitExceeded();
+			}
+			if (attempt == 26)
+			{
+				TEST_ASSERT(messages->items.Count() == 2 && GetString(messages->items[1], L"content") == observation);
+				TEST_ASSERT(GetString(request, L"tool_choice") == L"required");
+				return RuntimeContextFixture::Speech(L"最后一步重启成功");
+			}
+			TEST_ASSERT(attempt == 27 && messages->items.Count() == 4);
+			return fixture.terminal;
+		};
+		TEST_ASSERT(fixture.application->RunRound() == L"最后一步重启成功");
+		TEST_ASSERT(submissions == 28 && fixture.captures == 1);
+	});
+
 	TEST_CASE(L"Speech history creates the supplied folder and appends complete UTF-8 entries with local timestamps")
 	{
 		RuntimeTestFolder folder;

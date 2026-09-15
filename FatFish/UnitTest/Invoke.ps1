@@ -63,6 +63,7 @@ try {
   $report = [IO.File]::ReadAllText((Join-Path $fixture 'report.json')) | ConvertFrom-Json
   $report | ConvertTo-Json -Depth 8
   if ($applicationExitCode -ne 0 -or -not $report.passed) { throw 'Platform integration failed; see the sanitized report above.' }
+  if ($report.posts -ne 5 -or $report.contextOverflows -ne 1 -or $report.overflowRetries -ne 1) { throw 'Expected recovery from one HTTP 400 context overflow without restarting the vision round.' }
   $responseLines = @($applicationOutput | Where-Object { $_ -match '^(Vision|Fairy)> ' })
   if ($responseLines.Count -ne 3) { throw 'Expected JSON for the two final messages and the non-speak tools.' }
   for ($index = 0; $index -lt $responseLines.Count; $index++) {
@@ -79,7 +80,7 @@ try {
     $block = $speech[0] + " (speak)>`n****************`n" + $speech[1] + "`n****************"
     if ([regex]::Matches($outputText, [regex]::Escape($block)).Count -ne 1) { throw 'Expected one correctly formatted speech block per agent.' }
   }
-  Write-Output 'All CLI speech and JSON output checks passed.'
+  Write-Output 'CLI speech, JSON output and HTTP context overflow retry checks passed; tool calls and speech were not replayed.'
 } finally {
   if ($locationPushed) { Pop-Location }
   if ($null -ne $server -and -not $server.HasExited) { $server.Kill(); [void]$server.WaitForExit(5000) }

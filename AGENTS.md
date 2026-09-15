@@ -105,7 +105,7 @@ The fairy's character prompt is stored in `REPO-ROOT/themes/<theme>/Character.md
 - Use local system time with zero-padded fields and a 24-hour clock. Read it once after the vision agent finishes each round, and store the timestamp and labeled complete observation together in that round's user message. Preserve the original timestamps in conversation history and tool-feedback follow-ups.
 - The agent will access and maintain memories about anything, especially any interesting stuff about the user, try to summarize and infer what the user like, what the user is usually doing, etc.
 - The agent may choose to say something to the user.
-- Reuse the fairy session across rounds until the desktop theme changes; the next round then starts a fresh fairy session. `FatFishCli` keeps its session for the process lifetime.
+- Reuse the fairy session across rounds until the desktop theme changes; the next round then starts a fresh fairy session. Both apps also trim or reset fairy conversation history when recovering from a context overflow, as described below.
 
 ## File Organization
 
@@ -177,6 +177,16 @@ You are not recommended to modify this library, but if you really need to:
 - The runtime must tolerate extra `speak` calls from either agent: concatenate all successfully parsed nonempty texts in execution order with newlines, both within one response and across follow-ups. Do not discard repeated text or reject extra calls merely for exceeding the prompted count. Empty texts add no separator.
 - Keep speech accumulation local to each agent's current round. Pass the full vision result to the fairy and return the full fairy result; ordinary assistant text is not part of either result.
 
+### Fairy context overflow recovery
+
+- Apply this recovery only when the fairy model explicitly reports that the request exceeds its context limit. Preserve ordinary error behavior for the vision model, network failures, authorization failures and unrelated model errors.
+- Track completed fairy rounds with explicit message boundaries. Remove whole oldest rounds, including their assistant messages and tool replies; do not estimate tokens, cut arbitrary messages or generate summaries.
+- On the first overflow in a fairy round, snapshot the number `N` of completed historical rounds, remove the oldest `ceil(N / 3)` rounds, and retry the fairy request. On the second overflow in that same round, remove enough additional oldest rounds to reach `ceil(2 * N / 3)` removed rounds in total, using the original `N`. For `N = 0`, these two stages still retry with no historical rounds removed.
+- These first two stages preserve the entire active round, its tool exchanges, accumulated speech and submitted-speech state. Resume the failed request without repeating completed tools or speech. Count overflows across all tool-feedback follow-ups within the same round.
+- On the third overflow, reset the full fairy conversation, including the active assistant/tool exchanges and partial speech. Retry the fairy with only its system prompts and the exact original timestamped observation for this round. Renew the 24-step tool-completion budget for this fresh session while retaining the per-round overflow stage and three-retry limit. Require a new `speak`; do not retain abandoned partial speech in the completed round result. Completed memory-tool effects remain in place and are not rolled back.
+- All three retries reuse the original complete observation and timestamp without recapturing the desktop or rerunning vision. A fourth overflow aborts the round with `FairyContextRecoveryExhausted`. The desktop displays the error and uses its existing one-second delay before starting a fresh vision-fairy round. Interactive CLI reports this error and waits for another `ENTER`; `--once` exits cleanly with a nonzero status. Other errors retain their existing behavior.
+- Trimming or resetting conversation history never deletes memory files, undoes completed file writes or rewrites the desktop speech log. Reset the recovery stage and completed-round tracking when resetting the fairy session for a theme change.
+
 ## FatFishCli test app
 
 The CLI window title should be `FatFishCli`.
@@ -200,6 +210,7 @@ CONTENT
 - From `REPO-ROOT/FatFish`, run `& "$PWD/../Release/.github/Scripts/copilotBuild.ps1" -Configuration Debug -Platform x64`, followed by `& "$PWD/../Release/.github/Scripts/copilotExecute.ps1" -Mode UnitTest -Executable UnitTest -Configuration Debug -Platform x64`. Use the corresponding configuration and platform for the other builds.
 - Offline `UnitTest` verification must use synthetic model responses and temporary directories without reading real credentials, capturing the desktop, or making network requests. Cover memory safety, configuration validation, completion streaming, response formatting, error feedback, and multi-round agent execution.
 - Offline verification must cover multiple `speak` calls within one response and across follow-ups for both agents, complete vision-to-fairy forwarding, per-round result isolation, and an empty fairy `speak`.
+- Offline context-overflow tests must cover structured and textual model errors, unrelated errors and vision exclusions, whole-round trimming with the original round-count thresholds (including zero and small histories), tool-message integrity, active speech and tool preservation during the first two retries, full reset on the third overflow, the retry limit, unchanged observation timestamps, persistent memory and recovery on a later round. The CLI loopback fixture must return a real HTTP 400 context-overflow body and verify the fairy retry retains its active messages without repeating tools or speech.
 - Offline desktop tests must cover theme catalog order, exact-key selection and fallback, invalid selection types, and saving the selected theme without losing coordinates or unrelated configuration fields.
 - Offline character tests must cover selected-theme loading, missing-file fallback to `loli_maid`, invalid existing character files, and edits to character contents between rounds and tool-feedback follow-ups while retaining fairy history. Desktop tests must also cover clearing the fairy conversation after a theme switch while retaining stored memories, keeping the pending round's character path, repeated selection of the same theme, and rapid switches back to the original theme. Integration fixtures must provide their own theme character files rather than `env/Character.md` and verify that the first fairy request after a switch contains no prior user, assistant or tool messages.
 - For platform integration verification, run `REPO-ROOT/FatFish/UnitTest/Invoke.ps1` in PowerShell 7 after building `FatFishCli`. This opt-in test captures the desktop and uses only a local loopback fixture implemented by `Server.ps1` in the same folder.
@@ -252,7 +263,7 @@ On startup, show `Hello, world!` in a native Win32 tracking balloon tooltip (`TO
 
 `FatFishFairy` behaves like a user repeatedly pressing `ENTER` on `FatFishCli`:
 - Start the vision-fairy-speak loop immediately after creating the startup bubble in `WindowOpened`.
-- Run one round at a time on an owned background worker. Reuse the same `FairyApplication` and memory store; retain the fairy conversation until a theme switch resets it. Each vision observation still starts a new session.
+- Run one round at a time on an owned background worker. Reuse the same `FairyApplication` and memory store; retain the fairy conversation until a theme switch resets it or context-overflow recovery trims or resets it. Each vision observation still starts a new session.
 - After collecting the complete fairy speech, update the existing bubble on the UI thread, then immediately schedule the next round. An empty result clears and hides the bubble. Animation, dragging and menus must remain responsive during model requests.
 - Display initialization, capture and model errors that end a round in the bubble with the prefix `调用大模型发生错误：`, instead of letting them escape from the worker. Keep recoverable tool errors in the existing model-feedback path. Retry after one second on failure so repeated errors do not create a tight loop; successful rounds have no added delay. Retry failed initialization so correcting configuration can recover without restarting the window.
 - On exit, stop scheduling rounds, cancel any pending network operation and join the worker before destroying its application or the window. Queued UI callbacks must not access a destroyed window.

@@ -6,6 +6,21 @@ using namespace vl::collections;
 
 namespace fatfish
 {
+	ChatCompletionError::ChatCompletionError()
+		: Exception(L"The model server reported an error.")
+	{
+	}
+
+	ChatCompletionError::ChatCompletionError(const WString& sanitizedMessage)
+		: Exception(sanitizedMessage)
+	{
+	}
+
+	ContextLimitExceeded::ContextLimitExceeded()
+		: ChatCompletionError(L"The model request exceeds the model's context limit.")
+	{
+	}
+
 	Ptr<json::JsonNode> ParseJson(const WString& text, json::Parser& parser)
 	{
 		// Parser diagnostics can contain input, including private server responses.
@@ -46,6 +61,75 @@ namespace fatfish
 		auto value = GetField(object, name).Cast<json::JsonString>();
 		if (!value) throw Exception(L"Expected a string field: " + name);
 		return value->content.value;
+	}
+
+	void ThrowIfChatCompletionError(Ptr<json::JsonNode> response, vint httpStatus)
+	{
+		if (!response.Cast<json::JsonObject>()) return;
+		bool contextLimit = false;
+		try
+		{
+			auto optionalString = [](Ptr<json::JsonNode> object, const WString& name)
+			{
+				auto value = GetField(object, name).Cast<json::JsonString>();
+				return value ? wlower(value->content.value) : WString();
+			};
+			auto error = GetField(response, L"error");
+			auto nullError = error.Cast<json::JsonLiteral>();
+			if (!error || (nullError && nullError->value == json::JsonLiteralValue::Null))
+			{
+				// Some compatible servers return an error object without an envelope.
+				if (optionalString(response, L"object") != L"error" && optionalString(response, L"type") != L"error") return;
+				error = response;
+			}
+			WString code, type, message;
+			if (error.Cast<json::JsonObject>())
+			{
+				code = optionalString(error, L"code");
+				type = optionalString(error, L"type");
+				message = optionalString(error, L"message");
+			}
+			else
+			{
+				auto text = error.Cast<json::JsonString>();
+				if (text) message = wlower(text->content.value);
+				type = optionalString(response, L"error_type");
+			}
+			auto contains = [](const WString& text, const wchar_t* part) { return wcsstr(text.Buffer(), part) != nullptr; };
+			auto permittedStatus = (httpStatus >= 200 && httpStatus < 300) || httpStatus == 400 || httpStatus == 413 || httpStatus == 422;
+			bool unrelatedError = false;
+			for (auto marker : { L"rate_limit", L"quota", L"authentication", L"permission", L"unauthorized", L"forbidden", L"server_error", L"internal_error", L"overloaded", L"max_tokens", L"max_output_tokens", L"max_completion_tokens", L"output_limit", L"output_length" })
+			{
+				if (contains(code, marker) || contains(type, marker)) unrelatedError = true;
+			}
+			for (auto marker : { L"rate limit", L"tokens per minute", L"requests per minute", L"quota", L"output token limit", L"maximum output tokens", L"max_tokens must", L"max_tokens is too", L"max_completion_tokens must", L"max_output_tokens must", L"completion token limit" })
+			{
+				if (contains(message, marker)) unrelatedError = true;
+			}
+			if (permittedStatus && !unrelatedError)
+			{
+				for (auto known : { L"context_length_exceeded", L"context_window_exceeded", L"context_limit_exceeded", L"max_context_length_exceeded", L"prompt_too_long", L"input_too_long", L"input_tokens_exceeded" })
+				{
+					if (code == known || type == known) contextLimit = true;
+				}
+				// Keep the fallback narrow: generic token limits can mean rate limits
+				// or invalid output settings, neither of which is fixed by trimming history.
+				contextLimit = contextLimit
+					|| (contains(message, L"maximum context length") && (contains(message, L"exceed") || contains(message, L"requested")))
+					|| ((contains(message, L"context window") || contains(message, L"context length") || contains(message, L"context size"))
+						&& (contains(message, L"exceed") || contains(message, L"too long")))
+					|| contains(message, L"prompt is too long") || contains(message, L"prompt too long")
+					|| (contains(message, L"input is too long") && contains(message, L"tokens"));
+			}
+		}
+		catch (const Exception&)
+		{
+			// Malformed error metadata must never leak response data or be sent
+			// back to the model as a request to repair its assistant formatting.
+			throw ChatCompletionError();
+		}
+		if (contextLimit) throw ContextLimitExceeded();
+		throw ChatCompletionError();
 	}
 
 	void SetField(Ptr<json::JsonObject> object, const WString& name, Ptr<json::JsonNode> value)
@@ -121,7 +205,12 @@ namespace fatfish
 		vint first = 0;
 		while (first < text.Length() && (text[first] == L' ' || text[first] == L'\t' || text[first] == L'\r' || text[first] == L'\n')) first++;
 		// Also accept providers that return JSON despite a streaming request.
-		if (first < text.Length() && text[first] == L'{') return ParseJson(text, parser);
+		if (first < text.Length() && text[first] == L'{')
+		{
+			auto response = ParseJson(text, parser);
+			ThrowIfChatCompletionError(response);
+			return response;
+		}
 		auto message = Ptr(new json::JsonObject);
 		auto choice = Ptr(new json::JsonObject);
 		Dictionary<vint, Ptr<json::JsonObject>> calls;
@@ -140,7 +229,7 @@ namespace fatfish
 				return;
 			}
 			auto chunk = ParseJson(data, parser);
-			if (GetField(chunk, L"error")) throw Exception(L"The model server reported a streaming error.");
+			ThrowIfChatCompletionError(chunk);
 			auto choices = GetField(chunk, L"choices").Cast<json::JsonArray>();
 			if (!choices) throw Exception(L"Missing choices in completion stream.");
 			// Empty choices can carry usage after the final completion chunk.

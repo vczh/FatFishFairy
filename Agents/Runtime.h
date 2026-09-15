@@ -12,6 +12,11 @@ namespace fatfish
 		vl::WString tools, guidance, vision, fairy, character;
 	};
 
+	// The current observation still exceeds context after all fairy recovery attempts.
+	class FairyContextRecoveryExhausted : public ContextLimitExceeded
+	{
+	};
+
 	// The UI supplies exact character paths. Only an absent selected file uses the fallback.
 	extern vl::WString                                  LoadCharacterPrompt(const vl::filesystem::FilePath& selectedFile, const vl::filesystem::FilePath& fallbackFile);
 
@@ -22,7 +27,8 @@ namespace fatfish
 		ApiConfig                                       config;
 		MemoryStore                                     memory;
 		AgentPrompts                                    prompts;
-		vl::Ptr<vl::glr::json::JsonArray>                 fairyHistory;
+		// Only completed rounds are retained. The active round is owned by RunRound.
+		vl::collections::List<vl::Ptr<vl::glr::json::JsonArray>> fairyRounds;
 		vl::Ptr<vl::glr::json::JsonNode>                  toolSchema;
 		vl::Func<vl::WString(const vl::WString&)>         complete;
 		vl::Func<void(vl::collections::List<MonitorSnapshot>&)> capture;
