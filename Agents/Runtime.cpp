@@ -265,6 +265,8 @@ namespace fatfish
 				catch (const ContextLimitExceeded&)
 				{
 					if (vision) throw;
+					if (cancellation) cancellation->ThrowIfCancelled();
+					ContextOverflow();
 					if (recoveryStage == 3) throw FairyContextRecoveryExhausted();
 					recoveryStage++;
 					if (recoveryStage < 3)
@@ -310,6 +312,8 @@ namespace fatfish
 	WString FairyApplication::RunRound()
 	{
 		if (cancellation) cancellation->ThrowIfCancelled();
+		PhaseChanged(AgentPhase::Vision);
+		if (cancellation) cancellation->ThrowIfCancelled();
 		List<MonitorSnapshot> snapshots;
 		capture(snapshots);
 		if (cancellation) cancellation->ThrowIfCancelled();
@@ -347,6 +351,8 @@ namespace fatfish
 			+ L" " + padded(now.hour, 2) + L"-" + padded(now.minute, 2) + L"-" + padded(now.second, 2);
 		auto round = Ptr(new json::JsonArray);
 		round->items.Add(TextMessage(L"user", L"当前日期时间是：" + timestamp + L"\n以下是用户所有屏幕的内容：\n" + description));
+		if (cancellation) cancellation->ThrowIfCancelled();
+		PhaseChanged(AgentPhase::Fairy);
 		auto result = RunAgent(false, round);
 		// Failed partial exchanges never enter retained history, even after trimming.
 		fairyRounds.Add(round);
@@ -359,9 +365,10 @@ namespace fatfish
 	}
 
 	DesktopAgentRunner::DesktopAgentRunner(const FilePath& envFolder, const FilePath& memoryFolder,
-		const FilePath& initialCharacterFile, const FilePath& fallbackFile, Func<void(const WString&)> publishResult)
+		const FilePath& initialCharacterFile, const FilePath& fallbackFile, Func<void(const WString&)> publishResult,
+		Func<void(const WString&)> progress)
 		: DesktopAgentRunner({}, Ptr(new CancellationToken), publishResult,
-			[envFolder](const WString& text) { AppendSpeechHistory(envFolder, text); })
+			[envFolder](const WString& text) { AppendSpeechHistory(envFolder, text); }, progress)
 	{
 		characterFile = initialCharacterFile;
 		fallbackCharacterFile = fallbackFile;
@@ -391,10 +398,11 @@ namespace fatfish
 	}
 
 	DesktopAgentRunner::DesktopAgentRunner(Func<Ptr<FairyApplication>()> factory, Ptr<CancellationToken> cancellationToken,
-		Func<void(const WString&)> publishResult, Func<void(const WString&)> saveSpeech)
+		Func<void(const WString&)> publishResult, Func<void(const WString&)> saveSpeech, Func<void(const WString&)> progress)
 		: createApplication(factory)
 		, publish(publishResult)
 		, persistSpeech(saveSpeech)
+		, reportProgress(progress)
 		, cancellation(cancellationToken)
 	{
 		CHECK_ERROR(nextRound.CreateAutoUnsignal(true), L"DesktopAgentRunner#Cannot create round event.");
@@ -403,14 +411,46 @@ namespace fatfish
 	void DesktopAgentRunner::Run()
 	{
 		Ptr<FairyApplication> application;
+		auto phase = AgentPhase::Vision;
+		vint failures = 0;
+		WString previousProgress;
+		auto notifyProgress = [&]
+		{
+			if (cancellation->IsCancelled()) return;
+			auto text = WString(phase == AgentPhase::Vision ? L"V" : L"F");
+			if (failures > 0) text += itow(failures);
+			if (text == previousProgress) return;
+			previousProgress = text;
+			if (reportProgress) reportProgress(text);
+		};
+		// An injected factory can retain its application beyond the worker's lifetime.
+		// Detach callbacks before destroying their captured worker-local state.
+		struct ProgressHandlers
+		{
+			FairyApplication*       application = nullptr;
+			Ptr<EventHandler>       phase, overflow;
+
+			~ProgressHandlers()
+			{
+				if (application)
+				{
+					application->PhaseChanged.Remove(phase);
+					application->ContextOverflow.Remove(overflow);
+				}
+			}
+		} handlers;
 		WaitableObject* events[] = { &cancellation->Event(), &nextRound };
 		bool abandoned = false;
 		while (WaitableObject::WaitAny(events, 2, &abandoned) == 1)
 		{
 			WString result;
 			bool failed = false;
+			bool failureCounted = false;
 			try
 			{
+				cancellation->ThrowIfCancelled();
+				phase = AgentPhase::Vision;
+				notifyProgress();
 				cancellation->ThrowIfCancelled();
 				bool resetSession;
 				SPIN_LOCK(lockCharacter)
@@ -419,7 +459,21 @@ namespace fatfish
 					resetSession = resetFairySession;
 					resetFairySession = false;
 				}
-				if (!application) application = createApplication();
+				if (!application)
+				{
+					application = createApplication();
+					handlers.application = application.Obj();
+					handlers.phase = application->PhaseChanged.Add(Func<void(AgentPhase)>([&](AgentPhase current)
+					{
+						phase = current;
+						notifyProgress();
+					}));
+					handlers.overflow = application->ContextOverflow.Add(Func<void()>([&]
+					{
+						failures++;
+						notifyProgress();
+					}));
+				}
 				if (resetSession) application->ResetFairySession();
 				result = application->RunRound();
 				cancellation->ThrowIfCancelled();
@@ -428,6 +482,12 @@ namespace fatfish
 			catch (const OperationCancelled&)
 			{
 				return;
+			}
+			catch (const FairyContextRecoveryExhausted& error)
+			{
+				result = L"调用大模型发生错误：" + error.Message();
+				failed = true;
+				failureCounted = true; // The fourth overflow already notified its failure.
 			}
 			catch (const Exception& error)
 			{
@@ -439,6 +499,10 @@ namespace fatfish
 				result = L"调用大模型发生错误：" + WString(error.Description());
 				failed = true;
 			}
+			if (cancellation->IsCancelled()) return;
+			if (!failed) failures = 0;
+			else if (!failureCounted) failures++;
+			notifyProgress();
 			if (cancellation->IsCancelled()) return;
 			publish(result);
 			// A persistent configuration/network error should not spin or flood requests.

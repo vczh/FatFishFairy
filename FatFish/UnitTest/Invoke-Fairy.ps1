@@ -8,7 +8,7 @@ param(
 # Opt-in native GUI integration test. Uses an isolated executable, synthetic
 # themes/prompts/credentials and a loopback model server. Model screen captures
 # are sent only to that server and never saved; real credentials are not read.
-# ScreenshotPath optionally saves native UI images and the visible speech crop.
+# ScreenshotPath optionally saves native UI images, visible speech, and progress crops.
 $ErrorActionPreference = 'Stop'
 $repository = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $outputFolder = if ($Platform -eq 'x64') { "FatFish/x64/$Configuration" } else { "FatFish/$Configuration" }
@@ -54,6 +54,12 @@ namespace FatFishFairySmoke
         public int OpaquePixels;
         public int ClickX, ClickY;
         public int ThemeColor, StageColor;
+    }
+
+    public class ProgressFrame
+    {
+        public string Hash;
+        public int SkyBluePixels, Left, Top, Right, Bottom, BottomGap;
     }
 
     public static class Native
@@ -247,6 +253,50 @@ namespace FatFishFairySmoke
             }
         }
 
+        public static ProgressFrame CaptureProgress(IntPtr handle, string path)
+        {
+            var window = Describe(handle);
+            int width = Math.Min(96, window.Width), height = Math.Min(48, window.Height);
+            using (var bitmap = new Bitmap(window.Width, window.Height, PixelFormat.Format32bppArgb))
+            {
+                using (var graphics = Graphics.FromImage(bitmap))
+                {
+                    IntPtr dc = graphics.GetHdc();
+                    bool captured;
+                    try { captured = PrintWindow(handle, dc, 2); }
+                    finally { graphics.ReleaseHdc(dc); }
+                    if (!captured) throw new InvalidOperationException("Cannot capture the progress indicator.");
+                }
+                var mask = new byte[width * height];
+                var frame = new ProgressFrame { Left = width, Top = window.Height, Right = -1, Bottom = -1 };
+                for (int y = window.Height - height; y < window.Height; y++)
+                for (int x = 0; x < width; x++)
+                {
+                    if ((bitmap.GetPixel(x, y).ToArgb() & 0xFFFFFF) != 0x87CEEB) continue;
+                    frame.SkyBluePixels++;
+                    frame.Left = Math.Min(frame.Left, x); frame.Right = Math.Max(frame.Right, x);
+                    frame.Top = Math.Min(frame.Top, y); frame.Bottom = Math.Max(frame.Bottom, y);
+                    mask[(y - (window.Height - height)) * width + x] = 1;
+                }
+                frame.BottomGap = window.Height - frame.Bottom - 1;
+                if (frame.SkyBluePixels < 4 || frame.Left < 3 || frame.Left > 24
+                    || frame.BottomGap < 2 || frame.BottomGap > 24 || frame.Bottom - frame.Top < 5)
+                    throw new InvalidOperationException("Expected skyblue progress text inset near the fairy window's lower-left corner.");
+                using (var hash = SHA256.Create()) frame.Hash = BitConverter.ToString(hash.ComputeHash(mask));
+                if (!String.IsNullOrEmpty(path))
+                {
+                    // Save the actual screen crop for visual inspection of the glyphs.
+                    using (var crop = new Bitmap(width, height, PixelFormat.Format32bppArgb))
+                    {
+                        using (var graphics = Graphics.FromImage(crop))
+                            graphics.CopyFromScreen(window.X, window.Y + window.Height - height, 0, 0, crop.Size);
+                        crop.Save(path, ImageFormat.Png);
+                    }
+                }
+                return frame;
+            }
+        }
+
         public static void CaptureDesktop(IntPtr handle, string path)
         {
             var window = Describe(handle);
@@ -269,6 +319,7 @@ $server = $null
 $serverRun = 0
 $serverRoot = $null
 $testFailure = $null
+$progressHashes = @{}
 $cursor = [FatFishFairySmoke.Native+Point]::new()
 [void][FatFishFairySmoke.Native]::GetCursorPos([ref]$cursor)
 
@@ -309,14 +360,45 @@ function Start-FixtureServer([string]$firstCharacter = '# 中文桌面角色 the
   throw 'The local desktop model fixture did not become ready.'
 }
 
-function Wait-ModelRequest([int]$sequence) {
+function Wait-ModelRequest([string]$sequence) {
   for ($attempt = 0; $attempt -lt 200; $attempt++) {
     Assert-FixtureServer
     [void](Get-TestWindows)
     if (Test-Path -LiteralPath (Join-Path $script:serverRoot "pending-$sequence")) { return }
     Start-Sleep -Milliseconds 100
   }
-  throw "The continuous agent loop did not reach model request $sequence."
+  $windows = @(Get-TestWindows)
+  $bubble = $windows | Where-Object ClassName -eq 'tooltips_class32' | Select-Object -First 1
+  $bubbleText = if ($null -ne $bubble) { [FatFishFairySmoke.Native]::ControlText($bubble.Handle) } else { '<hidden>' }
+  if (-not [string]::IsNullOrEmpty($ScreenshotPath)) {
+    $main = $windows | Where-Object { $_.ClassName -eq 'VczhWindow' -and $_.Width -ge 300 -and $_.Height -ge 300 } | Select-Object -First 1
+    if ($null -ne $main) { [FatFishFairySmoke.Native]::CaptureDesktop($main.Handle, [IO.Path]::ChangeExtension($ScreenshotPath, 'pending-failure.png')) }
+  }
+  throw "The continuous agent loop did not reach model request $sequence. Current fixture bubble: $bubbleText"
+}
+
+function Assert-Progress($mainWindow, [string]$expected, [string]$captureName = '') {
+  $lastError = ''
+  for ($attempt = 0; $attempt -lt 50; $attempt++) {
+    [void](Get-TestWindows)
+    try {
+      $frame = [FatFishFairySmoke.Native]::CaptureProgress($mainWindow.Handle, '')
+      $matches = if ($progressHashes.ContainsKey($expected)) { $frame.Hash -ceq $progressHashes[$expected] } else { $progressHashes.Values -cnotcontains $frame.Hash }
+      if ($matches) {
+        $progressHashes[$expected] = $frame.Hash
+        if (-not [string]::IsNullOrEmpty($ScreenshotPath)) {
+          $name = if ($captureName.Length -gt 0) { $captureName } else { $expected }
+          [void][FatFishFairySmoke.Native]::CaptureProgress($mainWindow.Handle, [IO.Path]::ChangeExtension($ScreenshotPath, "progress-$name.png"))
+        }
+        return
+      }
+      $lastError = 'The rendered glyphs still match another progress state.'
+    } catch {
+      $lastError = $_.Exception.Message
+    }
+    Start-Sleep -Milliseconds 100
+  }
+  throw "The progress indicator did not reach $expected. $lastError"
 }
 
 function Complete-ModelRequests([int]$first, [int]$last) {
@@ -571,6 +653,7 @@ try {
   Assert-Window $main 123 91
   $greeting = Assert-Greeting $main
   Wait-ModelRequest 1
+  Assert-Progress $main 'V'
   Assert-SpeechHistory $history
   Start-Sleep -Milliseconds 200
   $frame = [FatFishFairySmoke.Native]::Capture($main.Handle, $ScreenshotPath)
@@ -631,20 +714,30 @@ try {
   # and menu selection. Now complete each round and hold the following request,
   # making speech replacement and automatic restart deterministic to inspect.
   Complete-ModelRequests 1 2
+  Assert-Progress $positioned 'F'
   Assert-SpeechHistory $history
   # Change selection while a fairy request is pending. All its tool-feedback
   # submissions must keep the character captured at the start of this round.
   Select-Theme $positioned 2
   Complete-ModelRequests 3 3
   Select-Theme $positioned 1
-  Complete-ModelRequests 4 4
+  [IO.File]::WriteAllText((Join-Path $script:serverRoot 'release-4'), 'release')
+  Wait-ModelRequest '4-retry-1'
+  Assert-Progress $positioned 'F1'
+  [IO.File]::WriteAllText((Join-Path $script:serverRoot 'release-4-retry-1'), 'release')
+  Wait-ModelRequest '4-retry-2'
+  Assert-Progress $positioned 'F2'
+  [IO.File]::WriteAllText((Join-Path $script:serverRoot 'release-4-retry-2'), 'release')
+  Wait-ModelRequest 5
   Assert-SpeechHistory $history
   # Switch during the last fairy follow-up so the following round must use the
   # missing-character fallback with a new fairy conversation. The fixture
   # rejects any user, assistant or tool history left over from this round.
   Select-Theme $positioned 2
+  Assert-Progress $positioned 'F2' 'F2-theme-switch'
   $speechStarted = [datetime]::Now
   Complete-ModelRequests 5 5
+  Assert-Progress $positioned 'V' 'V-after-recovered-round'
   $spoken = Wait-Bubble $completeSpeech
   $history = Assert-SpeechHistoryAppend $history $completeSpeech $speechStarted
   if ($spoken.Width -le $greeting.Width -or $spoken.Height -le $greeting.Height) { throw 'The native balloon did not resize for a long multiline model response.' }
@@ -668,10 +761,14 @@ try {
   Wait-Bubble ''
   Assert-SpeechHistory $history
   Complete-ModelRequests 10 10
+  Assert-Progress $positioned 'V1'
   [void](Wait-Bubble '调用大模型发生错误：' -Prefix)
   Assert-SpeechHistory $history
   $speechStarted = [datetime]::Now
-  Complete-ModelRequests 11 14
+  Complete-ModelRequests 11 12
+  Assert-Progress $positioned 'F1' 'F1-after-failed-round'
+  Complete-ModelRequests 13 14
+  Assert-Progress $positioned 'V' 'V-after-success'
   $recovered = Wait-Bubble $speechData.recoveredSpeech
   $history = Assert-SpeechHistoryAppend $history $speechData.recoveredSpeech $speechStarted
   Assert-BubblePlacement $positioned $recovered
@@ -682,6 +779,7 @@ try {
   Assert-SpeechHistory $history
   Assert-FixtureServer
   Write-Output 'Native greeting shape/movement, responsive UI during a pending request, complete multiline speech, empty speech, error recovery, fixed character within pending rounds, fresh fairy conversations after theme switching with fallback, and exit during a pending request passed.'
+  Write-Output 'Skyblue lower-left progress glyphs changed through V, F, F1, F2 and V1, preserved the failure counter across a theme switch, and reset after successful rounds. Optional progress-*.png files show actual screen crops for text inspection.'
 
   $application.Dispose()
   Start-FixtureServer
@@ -728,6 +826,16 @@ try {
   Write-Output 'UTF-8 speech history recorded complete nonempty fairy rounds with local timestamps, preserved prior entries across restarts, and excluded greetings, observations, partial rounds, silence and errors.'
 } catch {
   $testFailure = $_
+  try {
+    $windows = @(Get-TestWindows -AllowExit)
+    foreach ($bubble in @($windows | Where-Object ClassName -eq 'tooltips_class32')) {
+      Write-Output ('Fixture failure bubble: ' + [FatFishFairySmoke.Native]::ControlText($bubble.Handle))
+    }
+    if (-not [string]::IsNullOrEmpty($ScreenshotPath)) {
+      $main = $windows | Where-Object { $_.ClassName -eq 'VczhWindow' -and $_.Width -ge 300 -and $_.Height -ge 300 } | Select-Object -First 1
+      if ($null -ne $main) { [FatFishFairySmoke.Native]::CaptureDesktop($main.Handle, [IO.Path]::ChangeExtension($ScreenshotPath, 'failure.png')) }
+    }
+  } catch { }
   throw
 } finally {
   [FatFishFairySmoke.Native]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)

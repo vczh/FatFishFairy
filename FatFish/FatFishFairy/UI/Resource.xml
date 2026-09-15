@@ -41,6 +41,17 @@
         </ToolstripMenu>
         <Bounds ref.Name="fairyCanvas" AlignmentToParent="left:0 top:0 right:0 bottom:0">
           <ImageFrame ref.Name="fairyImage" Stretch="true" />
+          <Bounds AlignmentToParent="left:6 top:-1 right:-1 bottom:6" MinSizeLimitation="LimitToElement" TransparentToMouse="true">
+            <SolidLabel ref.Name="progressLabel" Text="V" Color="#87CEEB">
+              <att.Font-bind><![CDATA[
+                let font = self.DisplayFont in ({
+                  fontFamily:font.fontFamily size:font.size bold:true
+                  italic:font.italic underline:font.underline strikeline:font.strikeline
+                  antialias:font.antialias verticalAntialias:font.verticalAntialias
+                })
+              ]]></att.Font-bind>
+            </SolidLabel>
+          </Bounds>
         </Bounds>
       </Window>
     </Instance>

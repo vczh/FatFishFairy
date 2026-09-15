@@ -261,6 +261,16 @@ On startup, show `Hello, world!` in a native Win32 tracking balloon tooltip (`TO
 
 ### Executing Agents
 
+#### Progress indicator
+
+- Keep a `SolidLabel` at the main window's lower-left corner, inset about six GUI units from the left and bottom. Inherit the window font, apply bold, and use skyblue `#87CEEB`. Do not expose progress through an extra window title or add an idle state.
+- Display `V` while initializing, capturing, or running vision, and `F` while running the fairy, including tool feedback and context-recovery retries. Keep the last phase during failure display and the one-second retry delay; change to `V` when the next round starts.
+- Append the count of failures since the last successful desktop round, omitting zero: `V`, `F`, `F1`, `F2`, `V2`, and so on. Count every observed context-limit error immediately, including recovered ones. Count other failures that end a round once, including initialization, capture, model and speech-history write failures. The fourth context overflow already counts as a failure; aborting that round must not increment it again.
+- Keep the counter across rounds, history trimming, fresh fairy sessions and theme changes. Reset it immediately after a successful round, including silence, and after required speech-history persistence succeeds. The background runner owns phase and counter; publish updates to the UI thread without accessing the window from the worker or from callbacks after destruction.
+- Offline tests verify exact phase/counter sequences and publication order. The desktop loopback fixture blocks requests to verify rendered skyblue glyphs at the lower-left, distinct `V`/`F`/`F1`/`F2`/`V1` states, counter retention across theme changes and reset after success. With `-ScreenshotPath`, save actual-screen `.progress-*.png` crops for visual verification of the letters and numbers; glyph-mask comparisons alone do not establish the displayed text.
+
+#### Worker loop
+
 `FatFishFairy` behaves like a user repeatedly pressing `ENTER` on `FatFishCli`:
 - Start the vision-fairy-speak loop immediately after creating the startup bubble in `WindowOpened`.
 - Run one round at a time on an owned background worker. Reuse the same `FairyApplication` and memory store; retain the fairy conversation until a theme switch resets it or context-overflow recovery trims or resets it. Each vision observation still starts a new session.

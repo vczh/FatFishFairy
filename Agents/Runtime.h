@@ -12,6 +12,12 @@ namespace fatfish
 		vl::WString tools, guidance, vision, fairy, character;
 	};
 
+	enum class AgentPhase
+	{
+		Vision,
+		Fairy,
+	};
+
 	// The current observation still exceeds context after all fairy recovery attempts.
 	class FairyContextRecoveryExhausted : public ContextLimitExceeded
 	{
@@ -43,6 +49,10 @@ namespace fatfish
 	public:
 		// Complete assistant JSON messages, before tool execution; true identifies Vision.
 		vl::Event<void(bool, const vl::WString&)>         ResponseReceived;
+		// Synchronous notifications on the round's owning thread, before work/recovery.
+		vl::Event<void(AgentPhase)>                     PhaseChanged;
+		// Every fairy context rejection, including the one that exhausts recovery.
+		vl::Event<void()>                               ContextOverflow;
 
 		// The UI supplies both folders; neither location nor their relationship is assumed here.
 		                                                FairyApplication(const vl::filesystem::FilePath& envFolder, const vl::filesystem::FilePath& memoryFolder,
@@ -70,6 +80,7 @@ namespace fatfish
 		vl::Func<vl::Ptr<FairyApplication>()>            createApplication;
 		vl::Func<void(const vl::WString&)>               publish;
 		vl::Func<void(const vl::WString&)>               persistSpeech;
+		vl::Func<void(const vl::WString&)>               reportProgress;
 		vl::Ptr<CancellationToken>                      cancellation;
 		vl::EventObject                                nextRound;
 		vl::SpinLock                                   lockCharacter;
@@ -84,13 +95,16 @@ namespace fatfish
 		void                                            Run() override;
 
 	public:
+		// Progress is reported on the worker as V/F plus consecutive failures (zero omitted).
 		                                                DesktopAgentRunner(const vl::filesystem::FilePath& envFolder, const vl::filesystem::FilePath& memoryFolder,
 		                                                    const vl::filesystem::FilePath& initialCharacterFile, const vl::filesystem::FilePath& fallbackFile,
-		                                                    vl::Func<void(const vl::WString&)> publishResult);
+		                                                    vl::Func<void(const vl::WString&)> publishResult,
+		                                                    vl::Func<void(const vl::WString&)> progress = {});
 		// Inject a factory to test the actual worker with offline model responses.
 		                                                DesktopAgentRunner(vl::Func<vl::Ptr<FairyApplication>()> factory,
 		                                                    vl::Ptr<CancellationToken> cancellationToken, vl::Func<void(const vl::WString&)> publishResult,
-		                                                    vl::Func<void(const vl::WString&)> saveSpeech = {});
+		                                                    vl::Func<void(const vl::WString&)> saveSpeech = {},
+		                                                    vl::Func<void(const vl::WString&)> progress = {});
 		                                                ~DesktopAgentRunner();
 		// Finish the current round, then use this character with a fresh fairy session.
 		// Selecting the same file does not reset; saved memories are retained.

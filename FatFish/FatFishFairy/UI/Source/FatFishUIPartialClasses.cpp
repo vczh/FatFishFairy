@@ -79,6 +79,86 @@ Closures
 	{
 		::vl::__vwsn::This(__vwsnthis_0->self)->Close();
 	}
+
+	//-------------------------------------------------------------------
+
+	__vwsnf3_FatFishUI_fatfish_ui_FairyWindowConstructor___vwsn_fatfish_ui_FairyWindow_Initialize_::__vwsnf3_FatFishUI_fatfish_ui_FairyWindowConstructor___vwsn_fatfish_ui_FairyWindow_Initialize_(::fatfish::ui::FairyWindowConstructor* __vwsnctorthis_0)
+		:__vwsnthis_0(::vl::__vwsn::This(__vwsnctorthis_0))
+	{
+	}
+
+	void __vwsnf3_FatFishUI_fatfish_ui_FairyWindowConstructor___vwsn_fatfish_ui_FairyWindow_Initialize_::operator()(const ::vl::reflection::description::Value& __vwsn_value_) const
+	{
+		auto __vwsn_old_ = ::vl::__vwsn::This(__vwsnthis_0->progressLabel.Obj())->GetFont();
+		auto __vwsn_new_ = ::vl::__vwsn::Unbox<::vl::presentation::FontProperties>(__vwsn_value_);
+		if ((__vwsn_old_ == __vwsn_new_))
+		{
+			return;
+		}
+		::vl::__vwsn::This(__vwsnthis_0->progressLabel.Obj())->SetFont(__vwsn_new_);
+	}
+
+	//-------------------------------------------------------------------
+
+	__vwsnc1_FatFishUI_fatfish_ui_FairyWindowConstructor___vwsn_fatfish_ui_FairyWindow_Initialize__vl_reflection_description_IValueSubscription::__vwsnc1_FatFishUI_fatfish_ui_FairyWindowConstructor___vwsn_fatfish_ui_FairyWindow_Initialize__vl_reflection_description_IValueSubscription(::fatfish::ui::FairyWindowConstructor* __vwsnctorthis_0)
+		:__vwsnthis_0(::vl::__vwsn::This(__vwsnctorthis_0))
+	{
+		this->__vwsn_bind_cache_0 = static_cast<::fatfish::ui::FairyWindow*>(nullptr);
+		this->__vwsn_bind_handler_0_0 = ::vl::Ptr<::vl::reflection::description::IEventHandler>();
+		this->__vwsn_bind_opened_ = false;
+		this->__vwsn_bind_closed_ = false;
+	}
+
+	void __vwsnc1_FatFishUI_fatfish_ui_FairyWindowConstructor___vwsn_fatfish_ui_FairyWindow_Initialize__vl_reflection_description_IValueSubscription::__vwsn_bind_activator_()
+	{
+		auto __vwsn_bind_activator_result_ = [&](auto font){ return [&](){ ::vl::presentation::FontProperties __vwsn_temp__; __vwsn_temp__.fontFamily = font.fontFamily; __vwsn_temp__.size = font.size; __vwsn_temp__.bold = true; __vwsn_temp__.italic = font.italic; __vwsn_temp__.underline = font.underline; __vwsn_temp__.strikeline = font.strikeline; __vwsn_temp__.antialias = font.antialias; __vwsn_temp__.verticalAntialias = font.verticalAntialias; return __vwsn_temp__; }(); }(::vl::__vwsn::This(__vwsn_bind_cache_0)->GetDisplayFont());
+		::vl::__vwsn::EventInvoke(this->ValueChanged)(::vl::__vwsn::Box(__vwsn_bind_activator_result_));
+	}
+
+	void __vwsnc1_FatFishUI_fatfish_ui_FairyWindowConstructor___vwsn_fatfish_ui_FairyWindow_Initialize__vl_reflection_description_IValueSubscription::__vwsn_bind_callback_0_0(::vl::presentation::compositions::GuiGraphicsComposition* __vwsn_bind_callback_argument_0, ::vl::presentation::compositions::GuiEventArgs* __vwsn_bind_callback_argument_1)
+	{
+		this->__vwsn_bind_activator_();
+	}
+
+	bool __vwsnc1_FatFishUI_fatfish_ui_FairyWindowConstructor___vwsn_fatfish_ui_FairyWindow_Initialize__vl_reflection_description_IValueSubscription::Open()
+	{
+		if ((! __vwsn_bind_opened_))
+		{
+			(__vwsn_bind_opened_ = true);
+			(__vwsn_bind_cache_0 = [&](){ try{ return __vwsnthis_0->self; } catch(...){ return static_cast<::fatfish::ui::FairyWindow*>(nullptr); } }());
+			(__vwsn_bind_handler_0_0 = [&](){ try{ return ::vl::__vwsn::EventAttach(::vl::__vwsn::This(__vwsn_bind_cache_0)->DisplayFontChanged, ::vl::Func<void(::vl::presentation::compositions::GuiGraphicsComposition*, ::vl::presentation::compositions::GuiEventArgs*)>(this, &__vwsnc1_FatFishUI_fatfish_ui_FairyWindowConstructor___vwsn_fatfish_ui_FairyWindow_Initialize__vl_reflection_description_IValueSubscription::__vwsn_bind_callback_0_0)); } catch(...){ return ::vl::Ptr<::vl::reflection::description::IEventHandler>(); } }());
+			return true;
+		}
+		return false;
+	}
+
+	bool __vwsnc1_FatFishUI_fatfish_ui_FairyWindowConstructor___vwsn_fatfish_ui_FairyWindow_Initialize__vl_reflection_description_IValueSubscription::Update()
+	{
+		if ((__vwsn_bind_opened_ && (! __vwsn_bind_closed_)))
+		{
+			this->__vwsn_bind_activator_();
+			return true;
+		}
+		return false;
+	}
+
+	bool __vwsnc1_FatFishUI_fatfish_ui_FairyWindowConstructor___vwsn_fatfish_ui_FairyWindow_Initialize__vl_reflection_description_IValueSubscription::Close()
+	{
+		if ((! __vwsn_bind_closed_))
+		{
+			(__vwsn_bind_closed_ = true);
+			if (static_cast<bool>(__vwsn_bind_handler_0_0))
+			{
+				::vl::__vwsn::EventDetach(::vl::__vwsn::This(__vwsn_bind_cache_0)->DisplayFontChanged, __vwsn_bind_handler_0_0);
+				(__vwsn_bind_handler_0_0 = ::vl::Ptr<::vl::reflection::description::IEventHandler>());
+			}
+			(__vwsn_bind_cache_0 = static_cast<::fatfish::ui::FairyWindow*>(nullptr));
+			(__vwsn_bind_handler_0_0 = ::vl::Ptr<::vl::reflection::description::IEventHandler>());
+			return true;
+		}
+		return false;
+	}
+
 }
 
 /***********************************************************************
@@ -140,12 +220,41 @@ namespace fatfish
 			{
 				::vl::__vwsn::This(this->fairyCanvas)->SetOwnedElement(::vl::Ptr<::vl::presentation::elements::IGuiGraphicsElement>(this->fairyImage));
 			}
+			(this->__vwsn_precompile_1 = new ::vl::presentation::compositions::GuiBoundsComposition());
+			{
+				::vl::__vwsn::This(this->__vwsn_precompile_1)->SetTransparentToMouse(true);
+			}
+			{
+				::vl::__vwsn::This(this->__vwsn_precompile_1)->SetMinSizeLimitation(::vl::presentation::compositions::GuiGraphicsComposition::MinSizeLimitation::LimitToElement);
+			}
+			{
+				::vl::__vwsn::This(this->__vwsn_precompile_1)->SetAlignmentToParent([&](){ ::vl::presentation::Margin __vwsn_temp__; __vwsn_temp__.left = static_cast<::vl::vint>(6); __vwsn_temp__.top = (- static_cast<::vl::vint>(1)); __vwsn_temp__.right = (- static_cast<::vl::vint>(1)); __vwsn_temp__.bottom = static_cast<::vl::vint>(6); return __vwsn_temp__; }());
+			}
+			(this->progressLabel = ::vl::Ptr<::vl::presentation::elements::GuiSolidLabelElement>(::vl::reflection::description::Element_Constructor<::vl::presentation::elements::GuiSolidLabelElement>()));
+			::vl::__vwsn::This(__vwsn_this_)->SetNamedObject(::vl::WString::Unmanaged(L"progressLabel"), ::vl::__vwsn::Box(this->progressLabel));
+			{
+				::vl::__vwsn::This(this->progressLabel.Obj())->SetColor(::vl::__vwsn::Parse<::vl::presentation::Color>(::vl::WString::Unmanaged(L"#87CEEB")));
+			}
+			{
+				::vl::__vwsn::This(this->progressLabel.Obj())->SetText(::vl::WString::Unmanaged(L"V"));
+			}
+			{
+				::vl::__vwsn::This(this->__vwsn_precompile_1)->SetOwnedElement(::vl::Ptr<::vl::presentation::elements::IGuiGraphicsElement>(this->progressLabel));
+			}
+			{
+				::vl::__vwsn::This(this->fairyCanvas)->AddChild(static_cast<::vl::presentation::compositions::GuiGraphicsComposition*>(this->__vwsn_precompile_1));
+			}
 			{
 				::vl::__vwsn::This(::vl::__vwsn::This(this->self)->GetContainerComposition())->AddChild(static_cast<::vl::presentation::compositions::GuiGraphicsComposition*>(this->fairyCanvas));
 			}
 			{
 				auto __vwsn_event_handler_ = vl::Func(::vl_workflow_global::__vwsnf2_FatFishUI_fatfish_ui_FairyWindowConstructor___vwsn_fatfish_ui_FairyWindow_Initialize_(this));
 				::vl::__vwsn::EventAttach(::vl::__vwsn::This(this->__vwsn_precompile_0)->Clicked, __vwsn_event_handler_);
+			}
+			{
+				auto __vwsn_created_subscription_ = ::vl::Ptr<::vl::reflection::description::IValueSubscription>(new ::vl_workflow_global::__vwsnc1_FatFishUI_fatfish_ui_FairyWindowConstructor___vwsn_fatfish_ui_FairyWindow_Initialize__vl_reflection_description_IValueSubscription(this));
+				::vl::__vwsn::EventAttach(::vl::__vwsn::This(__vwsn_created_subscription_.Obj())->ValueChanged, vl::Func(::vl_workflow_global::__vwsnf3_FatFishUI_fatfish_ui_FairyWindowConstructor___vwsn_fatfish_ui_FairyWindow_Initialize_(this)));
+				::vl::__vwsn::This(__vwsn_this_)->AddSubscription(__vwsn_created_subscription_);
 			}
 		}
 
@@ -155,7 +264,9 @@ namespace fatfish
 			, themeMenuItem(static_cast<::vl::presentation::controls::GuiToolstripButton*>(nullptr))
 			, fairyCanvas(static_cast<::vl::presentation::compositions::GuiBoundsComposition*>(nullptr))
 			, fairyImage(::vl::Ptr<::vl::presentation::elements::GuiImageFrameElement>())
+			, progressLabel(::vl::Ptr<::vl::presentation::elements::GuiSolidLabelElement>())
 			, __vwsn_precompile_0(static_cast<::vl::presentation::controls::GuiToolstripButton*>(nullptr))
+			, __vwsn_precompile_1(static_cast<::vl::presentation::compositions::GuiBoundsComposition*>(nullptr))
 		{
 		}
 

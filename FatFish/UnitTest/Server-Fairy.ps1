@@ -22,7 +22,7 @@ function New-Speech([string]$id, [string]$text) {
   return @{ id = $id; type = 'function'; function = @{ name = 'speak'; arguments = (@{ text = $text } | ConvertTo-Json -Compress) } }
 }
 
-function Wait-Release([int]$sequence) {
+function Wait-Release([string]$sequence) {
   $deadline = [DateTime]::UtcNow.AddMinutes(2)
   while (-not (Test-Path -LiteralPath (Join-Path $FixtureRoot "release-$sequence"))) {
     if ([DateTime]::UtcNow -ge $deadline) { throw 'Timed out waiting for the GUI test to release a response.' }
@@ -124,9 +124,34 @@ try {
     foreach ($reply in @($payload.messages | Where-Object role -eq 'tool')) {
       Assert-Fixture (($reply.content | ConvertFrom-Json).ok -eq $true) 'A speech tool returned an error.'
     }
+    $retryPayload = if ($sequence -eq 4) { $payload | ConvertTo-Json -Depth 100 -Compress } else { $null }
     $payload = $null
     [IO.File]::WriteAllText((Join-Path $FixtureRoot "pending-$sequence"), $expectedModel)
     Wait-Release $sequence
+    if ($sequence -eq 4) {
+      # Two rejected fairy follow-ups keep all successful tools and partial
+      # speech intact while the GUI exposes F1 and F2 on blocked retries.
+      for ($retry = 1; $retry -le 2; $retry++) {
+        $context.Response.StatusCode = 400
+        $bytes = [Text.Encoding]::UTF8.GetBytes('{"error":{"code":"context_length_exceeded","type":"invalid_request_error","message":"Synthetic context overflow."}}')
+        $context.Response.ContentType = 'application/json; charset=utf-8'
+        $context.Response.OutputStream.Write($bytes, 0, $bytes.Length)
+        $context.Response.Close()
+        $context = $null
+        $pending = $listener.GetContextAsync()
+        if (-not $pending.Wait(120000)) { throw 'Timed out waiting for a fairy context retry.' }
+        $context = $pending.Result
+        Assert-Fixture ([Net.IPAddress]::IsLoopback($context.Request.RemoteEndPoint.Address)) 'Only loopback retry requests are accepted.'
+        Assert-Fixture ($context.Request.HttpMethod -eq 'POST' -and $context.Request.RawUrl -eq '/v1/chat/completions') 'A context retry restarted vision or issued a tool request.'
+        Assert-Fixture ($context.Request.Headers['Authorization'] -ceq 'Bearer synthetic-fairy-key') 'Expected synthetic retry authorization.'
+        $reader = [IO.StreamReader]::new($context.Request.InputStream, [Text.Encoding]::UTF8)
+        try { $payload = $reader.ReadToEnd() | ConvertFrom-Json -Depth 100 } finally { $reader.Dispose() }
+        Assert-Fixture (($payload | ConvertTo-Json -Depth 100 -Compress) -ceq $retryPayload) 'A context retry changed the fairy character, timestamp, tools, or speech state.'
+        $payload = $null
+        [IO.File]::WriteAllText((Join-Path $FixtureRoot "pending-4-retry-$retry"), $expectedModel)
+        Wait-Release "4-retry-$retry"
+      }
+    }
     if ($sequence -eq 10) {
       $context.Response.StatusCode = 503
       $bytes = [Text.Encoding]::UTF8.GetBytes('{"error":{"message":"synthetic desktop failure"}}')

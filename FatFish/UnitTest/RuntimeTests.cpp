@@ -258,8 +258,254 @@ public:
 	}
 };
 
+WString JoinRuntimeProgress(const List<WString>& values)
+{
+	WString result;
+	for (auto value : values)
+	{
+		if (result.Length() > 0) result += L",";
+		result += value;
+	}
+	return result;
+}
+
 TEST_FILE
 {
+	TEST_CASE(L"Agent progress announces vision before capture and fairy before requests and counts only fairy overflows")
+	{
+		for (vint failure = 0; failure < 3; failure++)
+		{
+			RuntimeWorkerFixture fixture;
+			List<WString> events;
+			vint fairyRequests = 0;
+			auto application = fixture.Create([&](const WString& body)
+			{
+				json::Parser parser;
+				auto request = ParseJson(body, parser);
+				auto vision = GetString(request, L"model") == fixture.config.visionModel;
+				TEST_ASSERT(fixture.captures == 1 && events.Count() > 0);
+				if (vision)
+				{
+					TEST_ASSERT(events[events.Count() - 1] == L"V");
+					if (failure == 1) throw ContextLimitExceeded();
+				}
+				else
+				{
+					fairyRequests++;
+					TEST_ASSERT(events[0] == L"V" && events[1] == L"F");
+					if (failure == 2) throw ContextLimitExceeded();
+				}
+				return fixture.Complete(body);
+			});
+			application->PhaseChanged.Add(Func<void(AgentPhase)>([&](AgentPhase phase)
+			{
+				if (phase == AgentPhase::Vision)
+				{
+					TEST_ASSERT(fixture.captures == 0 && fixture.requests.Count() == 0);
+					events.Add(L"V");
+				}
+				else
+				{
+					TEST_ASSERT(fixture.captures == 1 && fixture.requests.Count() == 2 && fairyRequests == 0);
+					events.Add(L"F");
+				}
+			}));
+			application->ContextOverflow.Add(Func<void()>([&]()
+			{
+				TEST_ASSERT(failure == 2 && fairyRequests == events.Count() - 1);
+				events.Add(L"overflow");
+			}));
+			if (failure == 0) TEST_ASSERT(application->RunRound() == L"第一轮回应");
+			else TEST_EXCEPTION(application->RunRound(), ContextLimitExceeded, [](const ContextLimitExceeded&) {});
+			TEST_ASSERT(JoinRuntimeProgress(events) == (failure == 0 ? L"V,F" : failure == 1 ? L"V" : L"V,F,overflow,overflow,overflow,overflow"));
+		}
+	});
+
+	TEST_CASE(L"Desktop progress counts consecutive failures at each round stage and resets after persisted or silent success")
+	{
+		// Initialization, capture, vision completion, fairy completion, and speech persistence.
+		for (vint failureStage = 0; failureStage < 5; failureStage++)
+		{
+			RuntimeWorkerFixture fixture;
+			EventObject published;
+			TEST_ASSERT(published.CreateAutoUnsignal(false));
+			List<WString> progress;
+			List<WString> atPublication;
+			List<WString> results;
+			List<WString> order;
+			List<vuint64_t> retryDelays;
+			vuint64_t failurePublishedAt = 0;
+			vint rounds = 0;
+			vint persistenceAttempts = 0;
+			auto silentSuccess = failureStage % 2 == 0;
+			auto complete = [&](const WString& body)
+			{
+				fixture.requests.Add(body);
+				json::Parser parser;
+				auto request = ParseJson(body, parser);
+				auto messages = GetField(request, L"messages").Cast<json::JsonArray>();
+				auto vision = GetString(request, L"model") == fixture.config.visionModel;
+				if (rounds <= 2 && ((failureStage == 2 && vision) || (failureStage == 3 && !vision)))
+					throw Exception(L"合成请求错误");
+				if (vision) return messages->items.Count() == 2 ? fixture.observation : fixture.terminal;
+				if (GetString(messages->items[messages->items.Count() - 1], L"role") != L"user") return fixture.terminal;
+				return RuntimeContextFixture::Speech(rounds == 3 && silentSuccess ? L"" : L"成功发言");
+			};
+			DesktopAgentRunner runner([&]() -> Ptr<FairyApplication>
+			{
+				if (failureStage == 0)
+				{
+					if (failurePublishedAt != 0) retryDelays.Add(GetTickCount64() - failurePublishedAt);
+					rounds++;
+					if (rounds <= 2) throw Exception(L"合成初始化错误");
+				}
+				return Ptr(new FairyApplication(fixture.folder.root / L"state", fixture.config, fixture.prompts, complete,
+					[&](List<MonitorSnapshot>& snapshots)
+					{
+						if (failureStage != 0 && failurePublishedAt != 0) retryDelays.Add(GetTickCount64() - failurePublishedAt);
+						if (failureStage != 0 || fixture.captures > 0) rounds++;
+						fixture.Capture(snapshots);
+						if ((failureStage == 1 && rounds <= 2) || rounds == 4) throw Exception(L"合成截图错误");
+					}, [](const WString&) -> WebResponse { throw Exception(L"Unexpected progress test network access."); }, fixture.cancellation));
+			}, fixture.cancellation, [&](const WString& result)
+			{
+				TEST_ASSERT(progress.Count() > 0);
+				atPublication.Add(progress[progress.Count() - 1]);
+				results.Add(result);
+				order.Add(L"publish:" + progress[progress.Count() - 1]);
+				failurePublishedAt = rounds <= 2 ? GetTickCount64() : 0;
+				published.Signal();
+			}, [&](const WString&)
+			{
+				persistenceAttempts++;
+				order.Add(L"save:" + progress[progress.Count() - 1]);
+				if (failureStage == 4 && rounds <= 2) throw Exception(L"合成保存错误");
+			}, [&](const WString& label)
+			{
+				if (progress.Count() == 0 || progress[progress.Count() - 1] != label)
+				{
+					progress.Add(label);
+					order.Add(L"progress:" + label);
+				}
+			});
+			TEST_ASSERT(runner.Start());
+			auto firstFailed = published.WaitForTime(5000);
+			runner.RequestRound();
+			auto secondFailed = published.WaitForTime(5000);
+			runner.SetCharacterFile(fixture.folder.root / L"new-theme" / L"Character.md"); // Theme changes do not reset the failure streak.
+			runner.RequestRound();
+			auto succeeded = published.WaitForTime(5000);
+			runner.RequestRound();
+			auto failedAfterSuccess = published.WaitForTime(5000);
+			runner.StopAndWait();
+			TEST_ASSERT(firstFailed && secondFailed && succeeded && failedAfterSuccess && rounds == 4);
+			// Measure on the worker so a delayed test-thread wakeup cannot invalidate the backoff assertion.
+			TEST_ASSERT(retryDelays.Count() == 2 && retryDelays[0] >= 900 && retryDelays[1] >= 900);
+			TEST_ASSERT(results.Count() == 4 && results[2] == (silentSuccess ? L"" : L"成功发言"));
+			auto failurePhase = failureStage < 3 ? L"V" : L"F";
+			TEST_ASSERT(atPublication.Count() == 4 && atPublication[0] == WString(failurePhase) + L"1" && atPublication[1] == WString(failurePhase) + L"2");
+			TEST_ASSERT(atPublication[2] == L"F" && atPublication[3] == L"V1");
+			TEST_ASSERT(JoinRuntimeProgress(progress) == (failureStage < 3 ? L"V,V1,V2,F2,F,V,V1" : L"V,F,F1,V1,F1,F2,V2,F2,F,V,V1"));
+			if (!silentSuccess)
+			{
+				auto saving = order.IndexOf(L"save:F2");
+				TEST_ASSERT(saving >= 0 && saving + 2 < order.Count());
+				TEST_ASSERT(order[saving + 1] == L"progress:F" && order[saving + 2] == L"publish:F");
+			}
+			TEST_ASSERT(persistenceAttempts == (failureStage == 4 ? 2 : silentSuccess ? 0 : 1));
+		}
+	});
+
+	TEST_CASE(L"Desktop progress counts fairy overflows without restarting vision or double-counting exhaustion")
+	{
+		// Successful recovery, exhausted recovery, unrelated completion failure, and persistence failure.
+		for (vint failure = 0; failure < 4; failure++)
+		{
+			RuntimeContextFixture fixture;
+			EventObject published;
+			TEST_ASSERT(published.CreateAutoUnsignal(false));
+			List<WString> progress;
+			List<WString> atPublication;
+			List<WString> results;
+			vint firstRoundRequests = 0;
+			fixture.respond = [&](Ptr<json::JsonNode>, Ptr<json::JsonArray> messages)
+			{
+				if (fixture.captures == 1)
+				{
+					auto submission = firstRoundRequests++;
+					if (failure == 1 || submission < (failure == 0 ? 2 : 1)) throw ContextLimitExceeded();
+					if (failure == 2) throw Exception(L"溢出之后的独立请求错误");
+				}
+				return GetString(messages->items[messages->items.Count() - 1], L"role") == L"user"
+					? RuntimeContextFixture::Speech(fixture.captures == 1 && failure == 0 ? L"" : L"恢复发言") : fixture.terminal;
+			};
+			{
+				DesktopAgentRunner runner([&]() { return fixture.application; }, fixture.cancellation, [&](const WString& result)
+				{
+					TEST_ASSERT(progress.Count() > 0);
+					atPublication.Add(progress[progress.Count() - 1]);
+					results.Add(result);
+					published.Signal();
+				}, [&](const WString&)
+				{
+					if (fixture.captures == 1 && failure == 3) throw Exception(L"溢出之后的保存错误");
+				}, [&](const WString& label)
+				{
+					if (progress.Count() == 0 || progress[progress.Count() - 1] != label) progress.Add(label);
+				});
+				TEST_ASSERT(runner.Start());
+				auto firstPublished = published.WaitForTime(5000);
+				runner.RequestRound();
+				auto secondPublished = published.WaitForTime(5000);
+				runner.StopAndWait();
+				TEST_ASSERT(firstPublished && secondPublished);
+			}
+			TEST_ASSERT(results.Count() == 2 && results[1] == L"恢复发言" && fixture.captures == 2);
+			TEST_ASSERT(atPublication[0] == (failure == 0 ? L"F" : failure == 1 ? L"F4" : L"F2") && atPublication[1] == L"F");
+			TEST_ASSERT(JoinRuntimeProgress(progress) == (failure == 0 ? L"V,F,F1,F2,F,V,F" : failure == 1 ? L"V,F,F1,F2,F3,F4,V4,F4,F" : L"V,F,F1,F2,V2,F2,F"));
+			TEST_ASSERT(firstRoundRequests == (failure == 0 ? 4 : failure == 1 ? 4 : failure == 2 ? 2 : 3));
+			// A fixture can retain the application beyond its worker's lifetime.
+			auto reportsAfterExit = progress.Count();
+			fixture.application->PhaseChanged(AgentPhase::Vision);
+			fixture.application->ContextOverflow();
+			TEST_ASSERT(progress.Count() == reportsAfterExit);
+		}
+	});
+
+	TEST_CASE(L"Cancellation during speech persistence leaves overflow progress unchanged and publishes nothing")
+	{
+		for (bool failSaveAfterCancellation : { false, true })
+		{
+			RuntimeContextFixture fixture;
+			EventObject saving;
+			TEST_ASSERT(saving.CreateAutoUnsignal(false));
+			List<WString> progress;
+			vint submissions = 0;
+			vint publications = 0;
+			bool cancelledSave = false;
+			fixture.respond = [&](Ptr<json::JsonNode>, Ptr<json::JsonArray>)
+			{
+				if (submissions++ == 0) throw ContextLimitExceeded();
+				return submissions == 2 ? RuntimeContextFixture::Speech(L"保存期间取消") : fixture.terminal;
+			};
+			DesktopAgentRunner runner([&]() { return fixture.application; }, fixture.cancellation,
+				[&](const WString&) { publications++; }, [&](const WString&)
+				{
+					saving.Signal();
+					cancelledSave = fixture.cancellation->Event().WaitForTime(5000);
+					if (failSaveAfterCancellation) throw Exception(L"Save failed after cancellation.");
+				}, [&](const WString& label)
+				{
+					if (progress.Count() == 0 || progress[progress.Count() - 1] != label) progress.Add(label);
+				});
+			TEST_ASSERT(runner.Start());
+			auto savePending = saving.WaitForTime(5000);
+			runner.StopAndWait();
+			TEST_ASSERT(savePending && cancelledSave && publications == 0 && submissions == 3);
+			TEST_ASSERT(JoinRuntimeProgress(progress) == L"V,F,F1");
+		}
+	});
+
 	TEST_CASE(L"Fairy context recovery removes whole oldest rounds with cumulative upward rounding")
 	{
 		vint firstRemoved[] = { 0, 1, 1, 1, 2, 2, 2, 3 };
@@ -944,14 +1190,17 @@ TEST_FILE
 
 	TEST_CASE(L"Stopping a pending desktop completion cancels it without publishing or persisting speech or errors")
 	{
-		for (bool afterSpeech : { false, true })
+		for (vint scenario = 0; scenario < 6; scenario++)
 		{
+			auto afterSpeech = scenario >= 3;
+			auto completionAfterCancellation = scenario % 3;
 			RuntimeWorkerFixture fixture;
 			EventObject requestStarted;
 			TEST_ASSERT(requestStarted.CreateAutoUnsignal(false));
 			vint publications = 0;
 			vint persisted = 0;
 			bool sawCancellation = false;
+			List<WString> progress;
 			DesktopAgentRunner runner([&]()
 			{
 				return fixture.Create([&](const WString& body)
@@ -961,15 +1210,21 @@ TEST_FILE
 					requestStarted.Signal();
 					sawCancellation = fixture.cancellation->Event().WaitForTime(5000);
 					if (!sawCancellation) throw Exception(L"Fixture cancellation timed out.");
+					if (completionAfterCancellation == 1) throw ContextLimitExceeded();
+					if (completionAfterCancellation == 2) throw Exception(L"Failure delivered after cancellation.");
 					return afterSpeech ? fixture.terminal : fixture.observation; // Even a completed reply must be ignored after cancellation.
 				});
-			}, fixture.cancellation, [&](const WString&) { publications++; }, [&](const WString&) { persisted++; });
+			}, fixture.cancellation, [&](const WString&) { publications++; }, [&](const WString&) { persisted++; }, [&](const WString& label)
+			{
+				if (progress.Count() == 0 || progress[progress.Count() - 1] != label) progress.Add(label);
+			});
 			TEST_ASSERT(runner.Start());
 			auto requestPending = requestStarted.WaitForTime(5000);
 			runner.RequestRound();
 			runner.StopAndWait();
 			TEST_ASSERT(requestPending && sawCancellation && publications == 0 && persisted == 0);
 			TEST_ASSERT(fixture.captures == 1 && fixture.requests.Count() == (afterSpeech ? 4 : 1) && runner.WaitForTime(0));
+			TEST_ASSERT(JoinRuntimeProgress(progress) == (afterSpeech ? L"V,F" : L"V"));
 		}
 	});
 

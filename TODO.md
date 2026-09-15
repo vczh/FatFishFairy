@@ -1,6 +1,6 @@
 # TODO
 
-- Add progress indicator at the left bottom corner of the main window:
+- [x] Add progress indicator at the left bottom corner of the main window:
   - "V": the vision agent is working.
   - "F": the fairy agent is working.
   - There is no idle state so in any moment we should display either "V" or "F".

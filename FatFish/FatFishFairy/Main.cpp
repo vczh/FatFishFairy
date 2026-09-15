@@ -185,6 +185,16 @@ private:
 					window->agentRunner->RequestRound();
 				}
 			});
+		},
+			[async, windowLifetime](const WString& text)
+		{
+			async->InvokeInMainThread(nullptr, [windowLifetime, text]()
+			{
+				if (auto window = windowLifetime->window)
+				{
+					window->progressLabel->SetText(text);
+				}
+			});
 		}));
 		if (!agentRunner->Start()) throw Exception(L"Cannot start desktop agent worker.");
 	}
