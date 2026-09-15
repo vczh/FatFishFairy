@@ -94,6 +94,8 @@ In `REPO-ROOT/env` these files are submitted to agents accordingly, in each requ
   - `Guidance.md`
   - `Request_Fairy.md`
   - `Character.md`
+    - For `FatFishCli` always use `REPO-ROOT/themes/loli_maid/Character.md`.
+    - For `FatFishFairy` use `REPO-ROOT/themes/<current-theme>/Character.md`. If such file does not exist, use the one for `loli_maid`.
   - `当前日期时间是：YYYY-MM-DD HH-mm-ss`
   - `以下是用户所有屏幕的内容：` + Description from the snapshots.
 - Use local system time with zero-padded fields and a 24-hour clock. Read it once after the vision agent finishes each round, and store the timestamp and labeled complete observation together in that round's user message. Preserve the original timestamps in conversation history and tool-feedback follow-ups.
@@ -247,6 +249,10 @@ On startup, show `Hello, world!` in a native Win32 tracking balloon tooltip (`TO
 - After collecting the complete fairy speech, update the existing bubble on the UI thread, then immediately schedule the next round. An empty result clears and hides the bubble. Animation, dragging and menus must remain responsive during model requests.
 - Display initialization, capture and model errors that end a round in the bubble with the prefix `调用大模型发生错误：`, instead of letting them escape from the worker. Keep recoverable tool errors in the existing model-feedback path. Retry after one second on failure so repeated errors do not create a tight loop; successful rounds have no added delay. Retry failed initialization so correcting configuration can recover without restarting the window.
 - On exit, stop scheduling rounds, cancel any pending network operation and join the worker before destroying its application or the window. Queued UI callbacks must not access a destroyed window.
+
+Use the `Character.md` of the current selected them when submitting a request to the fairy agent, no need to concern about immediate reacting to user switching to a new theme. Although sometines it would cause misalignment between the selected theme and the speak theme at the moment when it is pushed to the bubble, it is totally fine.
+
+<!-- Move and duplicate the current Character.md to `loli_maid`, delete this comment -->
 
 ### Playing Animation
 
