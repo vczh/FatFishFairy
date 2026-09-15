@@ -256,6 +256,14 @@ On startup, show `Hello, world!` in a native Win32 tracking balloon tooltip (`TO
 
 Use the selected theme's `Character.md` when submitting each fairy request, with the `loli_maid` fallback described above. Switching themes preserves the fairy session and memory and does not cancel or restart a pending response. That response may still use the previous character when displayed; this is acceptable.
 
+Whenever the fairy speaks, append it to a git-ignored file `REPO-ROOT/env/history.md` in the following format:
+```markdown
+# Speak YYYY-MM-DD HH-mm-ss
+
+content
+```
+Create this file if it doesn't exist.
+
 ### Playing Animation
 
 Theme assets are maintained separately from the desktop window implementation. Follow `themes/job.updateThemes.prompt.md` and mark an animation complete only after its files and metadata are verified. The catalog contains two themes with 20 animation series and 70 frames in total:
