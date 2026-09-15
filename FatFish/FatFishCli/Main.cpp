@@ -12,6 +12,7 @@ int wmain(int argc, wchar_t* argv[])
 {
 	SetConsoleOutputCP(CP_UTF8);
 	Console::Enable();
+	Console::SetTitle(L"FatFishCli");
 	{
 		auto once = false;
 		WString repository;

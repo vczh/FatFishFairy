@@ -109,7 +109,8 @@ try {
       Send-Completion $context @{ choices = @(@{ finish_reason = 'stop'; message = @{ role = 'assistant'; content = '' } }) }
     } elseif ($report.posts -eq 3) {
       Assert-Smoke ($payload.model -eq 'smoke-fairy') 'Third request must use the dedicated fairy model.'
-      Assert-Smoke ($payload.messages[1].content.Contains('PNG 编码验证通过')) 'Vision description was not forwarded to fairy.'
+      $fairyObservation = $payload.messages[1].content
+      Assert-Smoke ($fairyObservation -cmatch '^当前日期时间是：[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}-[0-9]{2}-[0-9]{2}\n以下是用户所有屏幕的内容：\n本地屏幕捕获和 PNG 编码验证通过。$') 'Fairy input lost the timestamp, screen label or complete vision observation.'
       $calls = @(
         (Make-Tool 'local-web' 'http_get' @{ url = "http://127.0.0.1:$Port/knowledge" }),
         (Make-Tool 'local-memory' 'file_write' @{ path = 'integration/result.md'; content = '真实平台集成测试通过。' }),
@@ -118,6 +119,7 @@ try {
       Send-Completion $context @{ choices = @(@{ finish_reason = 'tool_calls'; message = @{ role = 'assistant'; content = $null; tool_calls = $calls } }) }
     } else {
       Assert-Smoke ($payload.model -eq 'smoke-fairy') 'Tool follow-up must use the fairy model.'
+      Assert-Smoke ($payload.messages[1].content -ceq $fairyObservation) 'Tool follow-up changed the original timestamp or observation.'
       $replies = @($payload.messages | Where-Object role -eq 'tool')
       Assert-Smoke ($replies.Count -eq 3) 'Missing tool replies.'
       foreach ($reply in $replies) {

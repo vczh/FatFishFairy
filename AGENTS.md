@@ -96,6 +96,7 @@ In `REPO-ROOT/env` these files are submitted to agents accordingly, in each requ
   - `Character.md`
   - `当前日期时间是：YYYY-MM-DD HH-mm-ss`
   - `以下是用户所有屏幕的内容：` + Description from the snapshots.
+- Use local system time with zero-padded fields and a 24-hour clock. Read it once after the vision agent finishes each round, and store the timestamp and labeled complete observation together in that round's user message. Preserve the original timestamps in conversation history and tool-feedback follow-ups.
 - The agent will access and maintain memories about anything, especially any interesting stuff about the user, try to summarize and infer what the user like, what the user is usually doing, etc.
 - The agent may choose to say something to the user.
 - Every round runs in the same session.

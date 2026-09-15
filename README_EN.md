@@ -129,7 +129,7 @@ After configuring the models, run it in a terminal:
 - **ENTER**: captures all monitors, runs the vision model, and passes the complete observation to the fairy model.
 - **ESC**: exits. During a round, keypresses are handled after that round finishes.
 
-Each ENTER keypress runs one round; there is no automatic continuous capture. Screenshots are processed in memory and sent to the configured vision model service; the fairy model receives the observation text. The vision model starts a new session each round. The fairy model retains its conversation within the same process, can maintain files in `memory`, and may choose to remain silent.
+The CLI window title is `FatFishCli`. Each ENTER keypress runs one round; there is no automatic continuous capture. Screenshots are processed in memory and sent to the configured vision model service; the fairy model receives the observation text and the local date and time when that round's vision observation finishes (`YYYY-MM-DD HH-mm-ss`, using a 24-hour clock). The vision model starts a new session each round. The fairy model retains its conversation and each round's timestamp within the same process, can maintain files in `memory`, and may choose to remain silent.
 
 Other launch options:
 
