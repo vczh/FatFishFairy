@@ -18,6 +18,47 @@ namespace fatfish
 	using namespace vl::glr;
 	using namespace vl::inter_process::windows_http;
 
+	OperationCancelled::OperationCancelled()
+		: Exception(L"Agent execution was cancelled.")
+	{
+	}
+
+	CancellationToken::CancellationToken()
+	{
+		CHECK_ERROR(eventCancelled.CreateManualUnsignal(false), L"fatfish::CancellationToken#Cannot create cancellation event.");
+	}
+
+	void CancellationToken::Cancel()
+	{
+		eventCancelled.Signal();
+	}
+
+	bool CancellationToken::IsCancelled()
+	{
+		return eventCancelled.WaitForTime(0);
+	}
+
+	void CancellationToken::ThrowIfCancelled()
+	{
+		if (IsCancelled()) throw OperationCancelled();
+	}
+
+	EventObject& CancellationToken::Event()
+	{
+		return eventCancelled;
+	}
+
+	bool WaitForNetwork(EventObject& completed, Ptr<CancellationToken> cancellation, vint milliseconds)
+	{
+		if (!cancellation) return completed.WaitForTime(milliseconds);
+		cancellation->ThrowIfCancelled();
+		WaitableObject* events[] = { &cancellation->Event(), &completed };
+		bool abandoned = false;
+		auto signaled = WaitableObject::WaitAnyForTime(events, 2, milliseconds, &abandoned);
+		cancellation->ThrowIfCancelled();
+		return signaled == 1;
+	}
+
 	struct ParsedHttpUrl
 	{
 		WString		host;
@@ -160,8 +201,80 @@ namespace fatfish
 		~InternetHandle() { if (value) WinHttpCloseHandle(value); }
 	};
 
-	WString PostChatCompletion(const ApiConfig& config, const WString& body)
+	struct AsyncHttpRequest
 	{
+		HINTERNET value = nullptr;
+		EventObject eventCompleted;
+		EventObject eventClosed;
+		bool callbackInstalled = false;
+		DWORD completionStatus = 0;
+		DWORD errorCode = ERROR_SUCCESS;
+		DWORD bytesRead = 0;
+		char buffer[16384];
+
+		AsyncHttpRequest()
+		{
+			CHECK_ERROR(eventCompleted.CreateAutoUnsignal(false), L"fatfish::AsyncHttpRequest#Cannot create completion event.");
+			CHECK_ERROR(eventClosed.CreateManualUnsignal(false), L"fatfish::AsyncHttpRequest#Cannot create close event.");
+		}
+
+		~AsyncHttpRequest()
+		{
+			if (value)
+			{
+				// Only this worker uses the handle. An asynchronous operation may still
+				// be pending, but the initiating WinHTTP call has already returned.
+				WinHttpCloseHandle(value);
+				// WinHTTP can still access both the callback context and read buffer
+				// after CloseHandle returns. HANDLE_CLOSING is its final notification.
+				if (callbackInstalled) eventClosed.Wait();
+			}
+		}
+
+		static void CALLBACK OnStatus(HINTERNET, DWORD_PTR context, DWORD status, LPVOID information, DWORD length)
+		{
+			auto self = reinterpret_cast<AsyncHttpRequest*>(context);
+			if (!self) return;
+			if (status == WINHTTP_CALLBACK_STATUS_HANDLE_CLOSING)
+			{
+				self->eventClosed.Signal();
+			}
+			else if (status == WINHTTP_CALLBACK_STATUS_SENDREQUEST_COMPLETE
+				|| status == WINHTTP_CALLBACK_STATUS_HEADERS_AVAILABLE
+				|| status == WINHTTP_CALLBACK_STATUS_READ_COMPLETE
+				|| status == WINHTTP_CALLBACK_STATUS_REQUEST_ERROR)
+			{
+				self->completionStatus = status;
+				self->bytesRead = status == WINHTTP_CALLBACK_STATUS_READ_COMPLETE ? length : 0;
+				self->errorCode = status == WINHTTP_CALLBACK_STATUS_REQUEST_ERROR
+					? static_cast<WINHTTP_ASYNC_RESULT*>(information)->dwError : ERROR_SUCCESS;
+				self->eventCompleted.Signal();
+			}
+		}
+
+		void InstallCallback()
+		{
+			DWORD_PTR context = reinterpret_cast<DWORD_PTR>(this);
+			CheckPlatformResult(WinHttpSetOption(value, WINHTTP_OPTION_CONTEXT_VALUE, &context, sizeof(context)), L"WinHttpSetOption");
+			CheckPlatformResult(WinHttpSetStatusCallback(value, &OnStatus, WINHTTP_CALLBACK_FLAG_ALL_COMPLETIONS | WINHTTP_CALLBACK_FLAG_HANDLES, 0)
+				!= WINHTTP_INVALID_STATUS_CALLBACK, L"WinHttpSetStatusCallback");
+			callbackInstalled = true;
+		}
+
+		void Wait(DWORD expectedStatus, const wchar_t* operation, Ptr<CancellationToken> cancellation)
+		{
+			if (!WaitForNetwork(eventCompleted, cancellation, 120000))
+				throw Exception(L"Chat Completions exceeded its two-minute I/O deadline.");
+			if (errorCode != ERROR_SUCCESS)
+				throw Exception(WString(operation) + L" failed (Windows error " + itow(errorCode) + L").");
+			if (completionStatus != expectedStatus)
+				throw Exception(L"Unexpected Chat Completions network status.");
+		}
+	};
+
+	WString PostChatCompletion(const ApiConfig& config, const WString& body, Ptr<CancellationToken> cancellation)
+	{
+		if (cancellation) cancellation->ThrowIfCancelled();
 		auto url = ParseHttpUrl(GetChatCompletionUrl(config.url));
 		auto header = BuildAuthenticationHeader(config) + L"\r\nContent-Type: application/json; charset=utf-8\r\nAccept: text/event-stream, application/json\r\n";
 		HttpRequest requestBody;
@@ -170,20 +283,24 @@ namespace fatfish
 
 		// HttpClientApi supports HTTPS, but cannot disable redirect forwarding of custom
 		// authentication headers. Use WinHTTP directly for authenticated requests only.
-		InternetHandle session{ WinHttpOpen(L"FatFishCli", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0) };
+		InternetHandle session{ WinHttpOpen(L"FatFish", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, WINHTTP_FLAG_ASYNC) };
 		CheckPlatformResult(session.value != nullptr, L"WinHttpOpen");
 		CheckPlatformResult(WinHttpSetTimeouts(session.value, 30000, 30000, 120000, 120000), L"WinHttpSetTimeouts");
 		InternetHandle connection{ WinHttpConnect(session.value, url.host.Buffer(), (INTERNET_PORT)url.port, 0) };
 		CheckPlatformResult(connection.value != nullptr, L"WinHttpConnect");
-		InternetHandle request{ WinHttpOpenRequest(connection.value, L"POST", url.path.Buffer(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, url.secure ? WINHTTP_FLAG_SECURE : 0) };
+		AsyncHttpRequest request;
+		request.value = WinHttpOpenRequest(connection.value, L"POST", url.path.Buffer(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, url.secure ? WINHTTP_FLAG_SECURE : 0);
 		CheckPlatformResult(request.value != nullptr, L"WinHttpOpenRequest");
+		request.InstallCallback();
 		DWORD disabled = WINHTTP_DISABLE_REDIRECTS | WINHTTP_DISABLE_COOKIES;
 		CheckPlatformResult(WinHttpSetOption(request.value, WINHTTP_OPTION_DISABLE_FEATURE, &disabled, sizeof(disabled)), L"WinHttpSetOption");
 		DWORD autoLogon = WINHTTP_AUTOLOGON_SECURITY_LEVEL_HIGH;
 		CheckPlatformResult(WinHttpSetOption(request.value, WINHTTP_OPTION_AUTOLOGON_POLICY, &autoLogon, sizeof(autoLogon)), L"WinHttpSetOption");
 		CheckPlatformResult(WinHttpSendRequest(request.value, header.Buffer(), (DWORD)header.Length(), requestBody.body.Count() ? &requestBody.body[0] : nullptr,
-			(DWORD)requestBody.body.Count(), (DWORD)requestBody.body.Count(), 0), L"WinHttpSendRequest");
+			(DWORD)requestBody.body.Count(), (DWORD)requestBody.body.Count(), reinterpret_cast<DWORD_PTR>(&request)), L"WinHttpSendRequest");
+		request.Wait(WINHTTP_CALLBACK_STATUS_SENDREQUEST_COMPLETE, L"WinHttpSendRequest", cancellation);
 		CheckPlatformResult(WinHttpReceiveResponse(request.value, nullptr), L"WinHttpReceiveResponse");
+		request.Wait(WINHTTP_CALLBACK_STATUS_HEADERS_AVAILABLE, L"WinHttpReceiveResponse", cancellation);
 		DWORD status = 0;
 		DWORD statusSize = sizeof(status);
 		CheckPlatformResult(WinHttpQueryHeaders(request.value, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &status, &statusSize, WINHTTP_NO_HEADER_INDEX), L"WinHttpQueryHeaders");
@@ -193,14 +310,15 @@ namespace fatfish
 			throw Exception(L"Chat Completions returned HTTP " + itow(status) + L". Check the endpoint, credentials, and model configuration.");
 		}
 		stream::MemoryStream responseStream;
-		char buffer[16384];
 		while (true)
 		{
-			DWORD read = 0;
-			CheckPlatformResult(WinHttpReadData(request.value, buffer, sizeof(buffer), &read), L"WinHttpReadData");
+			if (cancellation) cancellation->ThrowIfCancelled();
+			CheckPlatformResult(WinHttpReadData(request.value, request.buffer, sizeof(request.buffer), nullptr), L"WinHttpReadData");
+			request.Wait(WINHTTP_CALLBACK_STATUS_READ_COMPLETE, L"WinHttpReadData", cancellation);
+			auto read = request.bytesRead;
 			if (!read) break;
 			if (responseStream.Size() + read > 16 * 1024 * 1024) throw Exception(L"The Chat Completions response exceeds 16 MiB.");
-			responseStream.Write(buffer, read);
+			responseStream.Write(request.buffer, read);
 		}
 		HttpResponse response;
 		response.body.Resize((vint)responseStream.Size());
@@ -211,8 +329,9 @@ namespace fatfish
 		return result;
 	}
 
-	WebResponse HttpGet(const WString& url, vint maxCharacters)
+	WebResponse HttpGet(const WString& url, vint maxCharacters, Ptr<CancellationToken> cancellation)
 	{
+		if (cancellation) cancellation->ThrowIfCancelled();
 		if (maxCharacters < 1 || maxCharacters > 100000) throw Exception(L"HTTP result length must be between 1 and 100000 characters.");
 		auto parsed = ParseHttpUrl(url);
 		HttpRequest request;
@@ -232,7 +351,7 @@ namespace fatfish
 			result = std::move(response);
 			completed.Signal();
 		});
-		auto finished = completed.WaitForTime(120000);
+		auto finished = WaitForNetwork(completed, cancellation, 120000);
 		client.Stop();
 		if (!finished) throw Exception(L"HTTP GET exceeded its two-minute deadline.");
 		if (result.Index() == 1) throw Exception(L"HTTP GET failed (Windows error " + itow(result.Get<HttpError>().errorCode) + L").");

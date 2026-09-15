@@ -91,8 +91,228 @@ public:
 	}
 };
 
+class RuntimeWorkerFixture
+{
+public:
+	RuntimeTestFolder folder;
+	ApiConfig config;
+	AgentPrompts prompts{ L"工具说明", L"记忆指引", L"视觉请求", L"精灵请求", L"固定性格" };
+	Ptr<CancellationToken> cancellation = Ptr(new CancellationToken);
+	List<WString> requests;
+	vint captures = 0;
+	WString terminal = LR"({"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":""}}]})";
+	WString observation = LR"({"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","tool_calls":[{"id":"observe","type":"function","function":{"name":"speak","arguments":"{\"text\":\"合成屏幕观察\"}"}}]}}]})";
+
+	RuntimeWorkerFixture()
+	{
+		config.visionModel = L"test-vision";
+		config.fairyModel = L"test-fairy";
+	}
+
+	void Capture(List<MonitorSnapshot>& snapshots)
+	{
+		captures++;
+		MonitorSnapshot snapshot;
+		snapshot.name = L"synthetic-display";
+		snapshot.width = snapshot.height = 1;
+		snapshot.dataUrl = L"data:image/png;base64,fixture";
+		snapshots.Add(snapshot);
+	}
+
+	WString Complete(const WString& body)
+	{
+		requests.Add(body);
+		json::Parser parser;
+		auto request = ParseJson(body, parser);
+		auto messages = GetField(request, L"messages").Cast<json::JsonArray>();
+		if (GetString(request, L"model") == config.visionModel)
+			return messages->items.Count() == 2 ? observation : terminal;
+		if (GetString(messages->items[messages->items.Count() - 1], L"role") != L"user") return terminal;
+		if (messages->items.Count() == 2)
+			return LR"({"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","tool_calls":[{"id":"answer","type":"function","function":{"name":"speak","arguments":"{\"text\":\"第一轮回应\"}"}}]}}]})";
+		return LR"({"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","tool_calls":[{"id":"silent","type":"function","function":{"name":"speak","arguments":"{\"text\":\"\"}"}}]}}]})";
+	}
+
+	Ptr<FairyApplication> Create(Func<WString(const WString&)> complete)
+	{
+		return Ptr(new FairyApplication(folder.root / L"state", config, prompts, complete,
+			[this](List<MonitorSnapshot>& snapshots) { Capture(snapshots); },
+			[](const WString&) -> WebResponse { throw Exception(L"Unexpected network access in worker fixture."); }, cancellation));
+	}
+
+	Ptr<FairyApplication> Create()
+	{
+		return Create([this](const WString& body) { return Complete(body); });
+	}
+};
+
 TEST_FILE
 {
+	TEST_CASE(L"Desktop worker starts immediately and retains its session while waiting for requested rounds")
+	{
+		RuntimeWorkerFixture fixture;
+		EventObject published;
+		TEST_ASSERT(published.CreateAutoUnsignal(false));
+		List<WString> results;
+		vint factoryCalls = 0;
+		DesktopAgentRunner runner([&]()
+		{
+			factoryCalls++;
+			return fixture.Create();
+		}, fixture.cancellation, [&](const WString& result)
+		{
+			results.Add(result);
+			published.Signal();
+		});
+		TEST_ASSERT(runner.Start());
+		auto startedImmediately = published.WaitForTime(5000);
+		auto waitedForRequest = !published.WaitForTime(100);
+		runner.RequestRound();
+		auto secondRoundCompleted = published.WaitForTime(5000);
+		runner.StopAndWait();
+		// Only inspect worker-owned collections after joining the thread.
+		TEST_ASSERT(startedImmediately && waitedForRequest && secondRoundCompleted);
+		TEST_ASSERT(factoryCalls == 1 && fixture.captures == 2 && fixture.requests.Count() == 8);
+		TEST_ASSERT(results.Count() == 2 && results[0] == L"第一轮回应" && results[1] == L"");
+		json::Parser parser;
+		vint expectedCounts[] = { 2, 4, 2, 4, 2, 4, 6, 8 };
+		for (vint i = 0; i < fixture.requests.Count(); i++)
+		{
+			auto request = ParseJson(fixture.requests[i], parser);
+			TEST_ASSERT(GetString(request, L"model") == (i % 4 < 2 ? fixture.config.visionModel : fixture.config.fairyModel));
+			TEST_ASSERT(GetField(request, L"messages").Cast<json::JsonArray>()->items.Count() == expectedCounts[i]);
+		}
+		auto firstFairy = GetField(ParseJson(fixture.requests[2], parser), L"messages").Cast<json::JsonArray>();
+		auto secondFairy = GetField(ParseJson(fixture.requests[6], parser), L"messages").Cast<json::JsonArray>();
+		TEST_ASSERT(GetString(firstFairy->items[1], L"content") == GetString(secondFairy->items[1], L"content"));
+		TEST_ASSERT(wcsstr(GetString(secondFairy->items[5], L"content").Buffer(), L"合成屏幕观察"));
+	});
+
+	TEST_CASE(L"Desktop worker reports initialization failure and recovers after a delayed requested retry")
+	{
+		RuntimeWorkerFixture fixture;
+		EventObject published;
+		TEST_ASSERT(published.CreateAutoUnsignal(false));
+		List<WString> results;
+		vint factoryCalls = 0;
+		DesktopAgentRunner runner([&]() -> Ptr<FairyApplication>
+		{
+			if (factoryCalls++ == 0) throw Exception(L"合成配置错误");
+			return fixture.Create();
+		}, fixture.cancellation, [&](const WString& result)
+		{
+			results.Add(result);
+			published.Signal();
+		});
+		TEST_ASSERT(runner.Start());
+		auto reportedFailure = published.WaitForTime(5000);
+		runner.RequestRound();
+		auto delayedRetry = !published.WaitForTime(100);
+		auto recovered = published.WaitForTime(5000);
+		runner.StopAndWait();
+		TEST_ASSERT(reportedFailure && delayedRetry && recovered);
+		TEST_ASSERT(factoryCalls == 2 && fixture.captures == 1 && fixture.requests.Count() == 4);
+		TEST_ASSERT(results.Count() == 2 && results[0] == L"调用大模型发生错误：合成配置错误" && results[1] == L"第一轮回应");
+	});
+
+	TEST_CASE(L"Stopping the desktop worker interrupts its failure retry delay")
+	{
+		RuntimeWorkerFixture fixture;
+		EventObject published;
+		TEST_ASSERT(published.CreateAutoUnsignal(false));
+		vint factoryCalls = 0;
+		vint publications = 0;
+		DesktopAgentRunner runner([&]() -> Ptr<FairyApplication>
+		{
+			factoryCalls++;
+			throw Exception(L"Persistent fixture failure.");
+		}, fixture.cancellation, [&](const WString&)
+		{
+			publications++;
+			published.Signal();
+		});
+		TEST_ASSERT(runner.Start());
+		auto reportedFailure = published.WaitForTime(5000);
+		runner.RequestRound();
+		fixture.cancellation->Cancel();
+		auto stoppedDuringDelay = runner.WaitForTime(500);
+		runner.StopAndWait();
+		TEST_ASSERT(reportedFailure && stoppedDuringDelay && factoryCalls == 1 && publications == 1);
+	});
+
+	TEST_CASE(L"Stopping a pending desktop completion cancels it without publishing speech or errors")
+	{
+		RuntimeWorkerFixture fixture;
+		EventObject requestStarted;
+		TEST_ASSERT(requestStarted.CreateAutoUnsignal(false));
+		vint publications = 0;
+		bool sawCancellation = false;
+		DesktopAgentRunner runner([&]()
+		{
+			return fixture.Create([&](const WString& body)
+			{
+				fixture.requests.Add(body);
+				requestStarted.Signal();
+				sawCancellation = fixture.cancellation->Event().WaitForTime(5000);
+				if (!sawCancellation) throw Exception(L"Fixture cancellation timed out.");
+				return fixture.observation; // Even a completed reply must be ignored after cancellation.
+			});
+		}, fixture.cancellation, [&](const WString&) { publications++; });
+		TEST_ASSERT(runner.Start());
+		auto requestPending = requestStarted.WaitForTime(5000);
+		runner.RequestRound();
+		runner.StopAndWait();
+		TEST_ASSERT(requestPending && sawCancellation && publications == 0);
+		TEST_ASSERT(fixture.captures == 1 && fixture.requests.Count() == 1 && runner.WaitForTime(0));
+	});
+
+	TEST_CASE(L"Round cancellation prevents capture and later tool or feedback side effects")
+	{
+		for (vint stage = 0; stage < 7; stage++)
+		{
+			RuntimeWorkerFixture fixture;
+			vint requests = 0;
+			vint fetched = 0;
+			vint observed = 0;
+			auto complete = [&](const WString&)
+			{
+				requests++;
+				if (stage == 2 || (stage == 5 && requests == 2)) fixture.cancellation->Cancel();
+				if (stage == 5 && requests == 1)
+					return WString(LR"({"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","tool_calls":[{"id":"fetch","type":"function","function":{"name":"http_get","arguments":"{\"url\":\"https://example.test\"}"}}]}}]})");
+				return WString(LR"({"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","tool_calls":[{"id":"fetch","type":"function","function":{"name":"http_get","arguments":"{\"url\":\"https://example.test\"}"}},{"id":"write","type":"function","function":{"name":"file_write","arguments":"{\"path\":\"should-not-exist.md\",\"content\":\"cancelled side effect\"}"}},{"id":"say","type":"function","function":{"name":"speak","arguments":"{\"text\":\"cancelled speech\"}"}}]}}]})");
+			};
+			auto capture = [&](List<MonitorSnapshot>& snapshots)
+			{
+				fixture.Capture(snapshots);
+				if (stage == 1) fixture.cancellation->Cancel();
+			};
+			auto fetch = [&](const WString&)
+			{
+				fetched++;
+				if (stage == 4 || stage == 6) fixture.cancellation->Cancel();
+				if (stage == 6) fixture.cancellation->ThrowIfCancelled();
+				WebResponse response;
+				response.statusCode = 200;
+				response.body = L"synthetic page";
+				return response;
+			};
+			FairyApplication application(fixture.folder.root / L"state", fixture.config, fixture.prompts, complete, capture, fetch, fixture.cancellation);
+			application.ResponseReceived.Add(Func<void(bool, const WString&)>([&](bool, const WString&)
+			{
+				observed++;
+				if (stage == 3) fixture.cancellation->Cancel();
+			}));
+			if (stage == 0) fixture.cancellation->Cancel();
+			TEST_EXCEPTION(application.RunRound(), OperationCancelled, [](const OperationCancelled&) {});
+			TEST_ASSERT(fixture.captures == (stage == 0 ? 0 : 1));
+			TEST_ASSERT(requests == (stage < 2 ? 0 : stage == 5 ? 2 : 1));
+			TEST_ASSERT(observed == (stage < 3 ? 0 : 1));
+			TEST_ASSERT(fetched == (stage < 4 ? 0 : 1));
+			TEST_ASSERT(!File(fixture.folder.root / L"state" / L"should-not-exist.md").Exists());
+		}
+	});
+
 	TEST_CASE(L"Application loads caller-supplied configuration and memory folders independently")
 	{
 		RuntimeTestFolder configuration;

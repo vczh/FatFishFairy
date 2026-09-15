@@ -5,8 +5,10 @@ param(
   [string]$ScreenshotPath = ''
 )
 
-# Opt-in native GUI integration test. Only a temporary copy of the executable,
-# theme assets and position configuration is used; credentials are never copied.
+# Opt-in native GUI integration test. Uses an isolated executable, synthetic
+# themes/prompts/credentials and a loopback model server. Model screen captures
+# are sent only to that server and never saved; real credentials are not read.
+# ScreenshotPath optionally saves native UI images and the visible speech crop.
 $ErrorActionPreference = 'Stop'
 $repository = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $outputFolder = if ($Platform -eq 'x64') { "FatFish/x64/$Configuration" } else { "FatFish/$Configuration" }
@@ -14,6 +16,7 @@ $executable = Join-Path $repository "$outputFolder/FatFishFairy.exe"
 if (-not (Test-Path -LiteralPath $executable)) { throw "Build $Configuration $Platform FatFishFairy before running this test." }
 
 Add-Type -AssemblyName System.Drawing
+Add-Type -AssemblyName System.Windows.Forms
 if (-not ('FatFishFairySmoke.Native' -as [type])) {
   $drawingReferences = @([System.Drawing.Bitmap].Assembly.Location, [System.Drawing.Color].Assembly.Location)
   foreach ($reference in @('ref/System.Runtime.dll', 'ref/System.Collections.dll', 'ref/System.Security.Cryptography.dll', 'ref/System.Security.Cryptography.Algorithms.dll', 'System.Private.Windows.GdiPlus.dll', 'System.Private.Windows.Core.dll')) {
@@ -76,7 +79,7 @@ namespace FatFishFairySmoke
         [DllImport("user32.dll")] private static extern bool GetLayeredWindowAttributes(IntPtr window, out uint color, out byte alpha, out uint flags);
         [DllImport("user32.dll")] private static extern bool PrintWindow(IntPtr window, IntPtr dc, uint flags);
         [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
-        [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern IntPtr SendMessageTimeout(IntPtr window, uint message, IntPtr wParam, IntPtr lParam, uint flags, uint timeout, out IntPtr result);
         [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern IntPtr SendMessageTimeout(IntPtr window, uint message, IntPtr wParam, StringBuilder text, uint flags, uint timeout, out IntPtr result);
         [DllImport("user32.dll", SetLastError = true)] public static extern bool SetWindowPos(IntPtr window, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
         [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr context);
@@ -95,12 +98,20 @@ namespace FatFishFairySmoke
 
         public static string ControlText(IntPtr window)
         {
-            var text = new StringBuilder(2048);
+            var text = new StringBuilder(Math.Max(2048, checked((int)SendMessage(window, 0x000E, IntPtr.Zero, IntPtr.Zero)) + 1));
             IntPtr result;
             // WM_GETTEXT is marshalled across processes by Windows; tooltip-private messages are not.
             if (SendMessageTimeout(window, 0x000D, new IntPtr(text.Capacity), text, 2, 1000, out result) == IntPtr.Zero)
-                throw new InvalidOperationException("Cannot read the greeting balloon text.");
+                throw new InvalidOperationException("Cannot read the talking balloon text.");
             return text.ToString();
+        }
+
+        public static IntPtr SendMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam)
+        {
+            IntPtr result;
+            if (SendMessageTimeout(window, message, wParam, lParam, 2, 2000, out result) == IntPtr.Zero)
+                throw new InvalidOperationException("The fairy UI did not respond within two seconds.");
+            return result;
         }
 
         public static Point DownwardStem(Window balloon)
@@ -111,20 +122,22 @@ namespace FatFishFairySmoke
             {
                 if (GetWindowRgn(balloon.Handle, region) <= 1)
                     throw new InvalidOperationException("Cannot inspect the native balloon shape.");
-                int topWidth = 0, bottomWidth = 0;
-                for (int x = 0; x < balloon.Width; x++)
-                {
-                    if (PtInRegion(region, x, balloon.Height / 4)) topWidth++;
-                    if (PtInRegion(region, x, balloon.Height * 3 / 4)) bottomWidth++;
-                }
-                if (topWidth * 2 < balloon.Width || bottomWidth == 0 || bottomWidth * 3 >= topWidth)
-                    throw new InvalidOperationException($"Expected a wide balloon body above a narrow downward stem; top/bottom widths are {topWidth}/{bottomWidth} in {balloon.Width}x{balloon.Height}.");
-                for (int y = balloon.Height - 1; y >= balloon.Height * 3 / 4; y--)
+                for (int y = balloon.Height - 1; y >= 0; y--)
                 {
                     int left = balloon.Width, right = -1;
                     for (int x = 0; x < balloon.Width; x++)
                         if (PtInRegion(region, x, y)) { left = Math.Min(left, x); right = x; }
-                    if (right >= left) return new Point { X = balloon.X + (left + right) / 2, Y = balloon.Y + y };
+                    if (right >= left)
+                    {
+                        // A stem has fixed native height even when the text body
+                        // spans many lines. Ratios of total height cannot locate it.
+                        int bodyWidth = 0;
+                        for (int x = 0; x < balloon.Width; x++)
+                            if (PtInRegion(region, x, Math.Max(0, y - 32))) bodyWidth++;
+                        if (right - left > 8 || bodyWidth * 2 < balloon.Width)
+                            throw new InvalidOperationException($"Expected a wide balloon body above a narrow downward stem; body/tip widths are {bodyWidth}/{right - left + 1} in {balloon.Width}x{balloon.Height}.");
+                        return new Point { X = balloon.X + (left + right) / 2, Y = balloon.Y + y };
+                    }
                 }
                 throw new InvalidOperationException("The greeting balloon has no bottom stem tip.");
             }
@@ -233,6 +246,17 @@ namespace FatFishFairySmoke
                 }
             }
         }
+
+        public static void CaptureDesktop(IntPtr handle, string path)
+        {
+            var window = Describe(handle);
+            using (var bitmap = new Bitmap(window.Width, window.Height, PixelFormat.Format32bppArgb))
+            {
+                using (var graphics = Graphics.FromImage(bitmap))
+                    graphics.CopyFromScreen(window.X, window.Y, 0, 0, bitmap.Size);
+                bitmap.Save(path, ImageFormat.Png);
+            }
+        }
     }
 }
 '@
@@ -241,9 +265,92 @@ namespace FatFishFairySmoke
 [void][FatFishFairySmoke.Native]::SetProcessDpiAwarenessContext([IntPtr](-4))
 $fixture = Join-Path ([IO.Path]::GetTempPath()) ('FatFishFairySmoke-' + [Guid]::NewGuid().ToString('N'))
 $application = $null
+$server = $null
+$serverRun = 0
+$serverRoot = $null
 $testFailure = $null
 $cursor = [FatFishFairySmoke.Native+Point]::new()
 [void][FatFishFairySmoke.Native]::GetCursorPos([ref]$cursor)
+
+function Stop-FixtureServer {
+  if ($null -ne $script:server) {
+    if (-not $script:server.HasExited) { $script:server.Kill(); [void]$script:server.WaitForExit(5000) }
+    $script:server.Dispose()
+    $script:server = $null
+  }
+}
+
+function Assert-FixtureServer {
+  $errorPath = Join-Path $script:serverRoot 'error.txt'
+  if (Test-Path -LiteralPath $errorPath) { throw ([IO.File]::ReadAllText($errorPath)) }
+  if ($script:server.HasExited) { throw 'The local desktop model fixture exited unexpectedly.' }
+}
+
+function Start-FixtureServer {
+  Stop-FixtureServer
+  $script:serverRun++
+  $script:serverRoot = Join-Path $fixture "server-$script:serverRun"
+  [void][IO.Directory]::CreateDirectory($script:serverRoot)
+  [IO.File]::WriteAllText((Join-Path $script:serverRoot 'data.json'), ($speechData | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+  $probe = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+  $probe.Start()
+  $port = $probe.LocalEndpoint.Port
+  $probe.Stop()
+  $modelConfiguration = @{ apikey = 'synthetic-fairy-key'; url = "http://127.0.0.1:$port/v1"; auth_header = 'Authorization: Bearer $APIKEY'; vision_model = 'desktop-vision'; fairy_model = 'desktop-fairy' }
+  [IO.File]::WriteAllText((Join-Path $fixture 'env/apikey.json'), ($modelConfiguration | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+  $shell = (Get-Process -Id $PID).Path
+  $script:server = Start-Process -FilePath $shell -WindowStyle Hidden -PassThru -ArgumentList @('-NoProfile', '-File', ('"' + (Join-Path $PSScriptRoot 'Server-Fairy.ps1') + '"'), '-FixtureRoot', ('"' + $script:serverRoot + '"'), '-Port', $port)
+  for ($attempt = 0; $attempt -lt 100; $attempt++) {
+    Assert-FixtureServer
+    if (Test-Path -LiteralPath (Join-Path $script:serverRoot 'ready')) { return }
+    Start-Sleep -Milliseconds 100
+  }
+  throw 'The local desktop model fixture did not become ready.'
+}
+
+function Wait-ModelRequest([int]$sequence) {
+  for ($attempt = 0; $attempt -lt 200; $attempt++) {
+    Assert-FixtureServer
+    [void](Get-TestWindows)
+    if (Test-Path -LiteralPath (Join-Path $script:serverRoot "pending-$sequence")) { return }
+    Start-Sleep -Milliseconds 100
+  }
+  throw "The continuous agent loop did not reach model request $sequence."
+}
+
+function Complete-ModelRequests([int]$first, [int]$last) {
+  for ($sequence = $first; $sequence -le $last; $sequence++) {
+    Wait-ModelRequest $sequence
+    [IO.File]::WriteAllText((Join-Path $script:serverRoot "release-$sequence"), 'release')
+  }
+  Wait-ModelRequest ($last + 1)
+}
+
+function Wait-Bubble([string]$expectedText, [switch]$Prefix) {
+  $lastText = ''
+  for ($attempt = 0; $attempt -lt 100; $attempt++) {
+    $balloons = @(Get-TestWindows | Where-Object ClassName -eq 'tooltips_class32')
+    if ($expectedText.Length -eq 0) {
+      if ($balloons.Count -eq 0) { return }
+    } elseif ($balloons.Count -eq 1) {
+      $lastText = [FatFishFairySmoke.Native]::ControlText($balloons[0].Handle).Replace("`r", '')
+      if (($Prefix -and $lastText.StartsWith($expectedText, [StringComparison]::Ordinal)) -or (-not $Prefix -and $lastText -ceq $expectedText)) { return $balloons[0] }
+    }
+    Start-Sleep -Milliseconds 100
+  }
+  throw "The talking balloon did not display the expected result (expected length $($expectedText.Length), actual length $($lastText.Length))."
+}
+
+function Assert-BubblePlacement($mainWindow, $balloon) {
+  $workArea = [Windows.Forms.Screen]::FromHandle($mainWindow.Handle).WorkingArea
+  if ($balloon.X -lt $workArea.Left -or $balloon.Y -lt $workArea.Top -or ($balloon.X + $balloon.Width) -gt $workArea.Right -or ($balloon.Y + $balloon.Height) -gt $workArea.Bottom) {
+    throw 'The updated talking balloon did not stay within the monitor work area.'
+  }
+  $expectedY = [Math]::Max($workArea.Top, $mainWindow.Y - $balloon.Height)
+  if ([Math]::Abs($balloon.Y - $expectedY) -gt 2) { throw 'The updated talking balloon did not stay just above the fairy or clamp to the work area.' }
+  $stem = [FatFishFairySmoke.Native]::DownwardStem($balloon)
+  if ([Math]::Abs($stem.X - ($mainWindow.X + $mainWindow.Width / 2)) -gt 4) { throw 'The resized talking balloon lost its horizontal stem target.' }
+}
 
 function Get-TestWindows([switch]$AllowExit) {
   if ($application.HasExited) {
@@ -394,7 +501,20 @@ try {
   $fixtureOutput = Join-Path $fixture $outputFolder
   [void][IO.Directory]::CreateDirectory($fixtureOutput)
   [void][IO.Directory]::CreateDirectory((Join-Path $fixture 'env'))
+  [void][IO.Directory]::CreateDirectory((Join-Path $fixture 'memory'))
   Copy-Item -LiteralPath $executable -Destination (Join-Path $fixtureOutput 'FatFishFairy.exe')
+  foreach ($name in @('Tools.md', 'Guidance.md', 'Request_Vision.md', 'Request_Fairy.md', 'Character.md')) {
+    [IO.File]::WriteAllText((Join-Path $fixture "env/$name"), "# 中文桌面测试 $name", [Text.UTF8Encoding]::new($false))
+  }
+  $speechData = @{
+    visionFirst = "第一段完整观察。`n第二段完整观察。"
+    longSpeech = '第一段中文长回复：' + ('桌面精灵应保留完整文字，窗口继续播放动画。' * 30)
+    secondSpeech = "第二段回复。`n这一行来自同一次 speak。"
+    followUpSpeech = '第三段回复来自工具反馈之后。'
+    recoveredSpeech = '发生错误后已经恢复，继续观察桌面。'
+  }
+  $completeSpeech = $speechData.longSpeech + "`n" + $speechData.secondSpeech + "`n" + $speechData.followUpSpeech
+  Start-FixtureServer
   # Deliberately use keys in nonalphabetical order and distinct Chinese display
   # names. Menu-row selection verifies order; optional screenshots show the labels.
   $themeKeys = @('theme_z', 'theme_a', 'theme_m')
@@ -416,6 +536,7 @@ try {
   $main = Wait-MainWindow
   Assert-Window $main 123 91
   $greeting = Assert-Greeting $main
+  Wait-ModelRequest 1
   Start-Sleep -Milliseconds 200
   $frame = [FatFishFairySmoke.Native]::Capture($main.Handle, $ScreenshotPath)
   if (-not [string]::IsNullOrEmpty($ScreenshotPath)) {
@@ -470,13 +591,48 @@ try {
   $positioned = [FatFishFairySmoke.Native]::Describe($moved.Handle)
   Assert-Window $positioned ($moved.X + 29) ($moved.Y + 41)
   [void](Assert-GreetingMoved $moved $movedGreeting $positioned)
-  Close-ThroughMenu $positioned
-  Write-Output 'Native Hello, world! balloon appeared above the fairy and followed live dragging and SetWindowPos; drag persistence and menu exit passed.'
 
+  # The first model response has remained blocked throughout animation, dragging
+  # and menu selection. Now complete each round and hold the following request,
+  # making speech replacement and automatic restart deterministic to inspect.
+  Complete-ModelRequests 1 5
+  $spoken = Wait-Bubble $completeSpeech
+  if ($spoken.Width -le $greeting.Width -or $spoken.Height -le $greeting.Height) { throw 'The native balloon did not resize for a long multiline model response.' }
+  Assert-BubblePlacement $positioned $spoken
+  $workArea = [Windows.Forms.Screen]::FromHandle($positioned.Handle).WorkingArea
+  $speechWindowY = [Math]::Min($workArea.Bottom - $positioned.Height, $workArea.Top + $spoken.Height + 24)
+  if (-not [FatFishFairySmoke.Native]::SetWindowPos($positioned.Handle, [IntPtr]::Zero, ($positioned.X + 13), $speechWindowY, 0, 0, 0x15)) { throw 'Cannot move the fairy while verifying its resized talking balloon.' }
+  Start-Sleep -Milliseconds 250
+  $positioned = [FatFishFairySmoke.Native]::Describe($positioned.Handle)
+  $spoken = Wait-Bubble $completeSpeech
+  Assert-BubblePlacement $positioned $spoken
+  if (-not [string]::IsNullOrEmpty($ScreenshotPath)) {
+    # PrintWindow truncates long native-tooltip text despite WM_GETTEXT and
+    # on-screen painting retaining it. Use speech-desktop.png for visual QA.
+    [void][FatFishFairySmoke.Native]::Capture($spoken.Handle, [IO.Path]::ChangeExtension($ScreenshotPath, 'speech.png'))
+    [FatFishFairySmoke.Native]::CaptureDesktop($spoken.Handle, [IO.Path]::ChangeExtension($ScreenshotPath, 'speech-desktop.png'))
+  }
+  Complete-ModelRequests 6 9
+  Wait-Bubble ''
+  Complete-ModelRequests 10 10
+  [void](Wait-Bubble '调用大模型发生错误：' -Prefix)
+  Complete-ModelRequests 11 14
+  $recovered = Wait-Bubble $speechData.recoveredSpeech
+  Assert-BubblePlacement $positioned $recovered
+  Complete-ModelRequests 15 15
+  # The http_get tool's request 16 has no release file: exit must cancel it.
+  # The following restart/fallback runs also exit during a pending model POST.
+  Close-ThroughMenu $positioned
+  Assert-FixtureServer
+  Write-Output 'Native greeting shape/movement, responsive UI during a pending request, complete multiline speech, empty speech, error recovery, persistent fairy history and exit during a pending request passed.'
+
+  $application.Dispose()
+  Start-FixtureServer
   $application = Start-Process -FilePath (Join-Path $fixtureOutput 'FatFishFairy.exe') -WorkingDirectory $env:SystemRoot -WindowStyle Hidden -PassThru
   $restarted = Wait-MainWindow
   Assert-Window $restarted $saved.windowX $saved.windowY
   [void](Assert-Greeting $restarted)
+  Wait-ModelRequest 1
   Start-Sleep -Milliseconds 200
   Assert-Theme $restarted 1
   Close-ThroughMenu $restarted
@@ -485,14 +641,25 @@ try {
   $saved.selectedTheme = 'unknown_theme'
   [IO.File]::WriteAllText($configPath, ($saved | ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false))
   $application.Dispose()
+  Start-FixtureServer
   $application = Start-Process -FilePath (Join-Path $fixtureOutput 'FatFishFairy.exe') -WorkingDirectory $env:SystemRoot -WindowStyle Hidden -PassThru
   $fallback = Wait-MainWindow
   Assert-Window $fallback $saved.windowX $saved.windowY
   [void](Assert-Greeting $fallback)
+  Wait-ModelRequest 1
   Start-Sleep -Milliseconds 200
   Assert-Theme $fallback 0
   Close-ThroughMenu $fallback
   Write-Output 'Unknown selectedTheme defaulted to the first theme; final menu exit completed with code 0.'
+
+  Stop-FixtureServer
+  Remove-Item -LiteralPath (Join-Path $fixture 'env/apikey.json')
+  $application.Dispose()
+  $application = Start-Process -FilePath (Join-Path $fixtureOutput 'FatFishFairy.exe') -WorkingDirectory $env:SystemRoot -WindowStyle Hidden -PassThru
+  $unconfigured = Wait-MainWindow
+  [void](Wait-Bubble '调用大模型发生错误：' -Prefix)
+  Close-ThroughMenu $unconfigured
+  Write-Output 'Missing model configuration appeared in the error balloon and the desktop remained usable.'
 } catch {
   $testFailure = $_
   throw
@@ -501,6 +668,7 @@ try {
   [void][FatFishFairySmoke.Native]::SetCursorPos($cursor.X, $cursor.Y)
   if ($null -ne $application -and -not $application.HasExited) { $application.Kill(); [void]$application.WaitForExit(5000) }
   if ($null -ne $application) { $application.Dispose() }
+  Stop-FixtureServer
   $fixtureFull = [IO.Path]::GetFullPath($fixture)
   $temporaryPrefix = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'
   if (-not $fixtureFull.StartsWith($temporaryPrefix, [StringComparison]::OrdinalIgnoreCase) -or -not [IO.Path]::GetFileName($fixtureFull).StartsWith('FatFishFairySmoke-')) { throw 'Unsafe fairy fixture cleanup path.' }

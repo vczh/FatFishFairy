@@ -20,6 +20,21 @@ namespace
 
 TEST_FILE
 {
+	TEST_CASE(L"Cancellation stays signaled and prevents HTTP I/O")
+	{
+		auto cancellation = Ptr(new CancellationToken);
+		TEST_ASSERT(!cancellation->IsCancelled());
+		cancellation->ThrowIfCancelled();
+		cancellation->Cancel();
+		cancellation->Cancel();
+		TEST_ASSERT(cancellation->IsCancelled() && cancellation->Event().WaitForTime(0));
+		TEST_ASSERT(cancellation->IsCancelled());
+		TEST_EXCEPTION(cancellation->ThrowIfCancelled(), OperationCancelled, [](const OperationCancelled&) {});
+		// Deliberately invalid inputs prove cancellation wins before validation or I/O.
+		TEST_EXCEPTION(PostChatCompletion({}, L"", cancellation), OperationCancelled, [](const OperationCancelled&) {});
+		TEST_EXCEPTION(HttpGet(L"", 0, cancellation), OperationCancelled, [](const OperationCancelled&) {});
+	});
+
 	TEST_CASE(L"Completion URLs normalize and unsafe requests fail before I/O")
 	{
 		TEST_ASSERT(GetChatCompletionUrl(L"https://example.test/v1/") == L"https://example.test/v1/chat/completions"); // Append Chat Completions to a base URL.

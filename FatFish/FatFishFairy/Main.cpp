@@ -1,6 +1,7 @@
 #define GAC_HEADER_USE_NAMESPACE
 #include "UI/Source/FatFishUI.h"
 #include "../../Agents/Desktop.h"
+#include "../../Agents/Runtime.h"
 #include <GacUI.Windows.h>
 #include <Skins/DarkSkin/DarkSkin.h>
 #include <CommCtrl.h>
@@ -33,10 +34,21 @@ public:
 };
 GUI_REGISTER_PLUGIN(FairySkinPlugin)
 
+class FairyDesktopWindow;
+
+// Only accessed on the UI thread; queued callbacks can outlive the window.
+struct FairyWindowLifetime : public Object
+{
+	FairyDesktopWindow* window = nullptr;
+};
+
 class FairyDesktopWindow : public fatfish::ui::FairyWindow, public INativeControllerListener
 {
 private:
 	FilePath                                envFolder;
+	FilePath                                memoryFolder;
+	Ptr<DesktopAgentRunner>                  agentRunner;
+	Ptr<FairyWindowLifetime>                 lifetime = Ptr(new FairyWindowLifetime);
 	const List<Ptr<DesktopTheme>>&           themes;
 	vint                                    selectedTheme;
 	ThemePlayback                           playback;
@@ -48,6 +60,7 @@ private:
 	TOOLINFOW                               speechTool = {};
 	Nullable<NativePoint>                   speechLayoutTarget;
 	vint                                    speechStemX = 0;
+	WString                                 speechText = L"Hello, world!";
 
 	void LoadThemeImages(Ptr<DesktopTheme> theme)
 	{
@@ -84,7 +97,7 @@ private:
 
 	void UpdateSpeechPosition()
 	{
-		if (!speechBubble) return;
+		if (!speechBubble || speechText.Length() == 0) return;
 		auto bounds = GetNativeWindow()->GetBounds();
 		auto screen = GetRelatedScreen();
 		if (!screen) screen = GetCurrentController()->ScreenService()->GetScreen(vint(0));
@@ -117,6 +130,21 @@ private:
 		}
 	}
 
+	void SetSpeechText(const WString& text)
+	{
+		SendMessageW(speechBubble, TTM_TRACKACTIVATE, FALSE, reinterpret_cast<LPARAM>(&speechTool));
+		speechText = text;
+		speechTool.lpszText = const_cast<wchar_t*>(speechText.Buffer());
+		SendMessageW(speechBubble, TTM_UPDATETIPTEXTW, 0, reinterpret_cast<LPARAM>(&speechTool));
+		// Text changes resize the complete balloon, including its stem offset.
+		speechLayoutTarget.Reset();
+		if (speechText.Length() > 0)
+		{
+			SendMessageW(speechBubble, TTM_TRACKACTIVATE, TRUE, reinterpret_cast<LPARAM>(&speechTool));
+			UpdateSpeechPosition();
+		}
+	}
+
 	void OnWindowOpened(GuiGraphicsComposition* sender, GuiEventArgs& arguments)
 	{
 		if (speechBubble) return;
@@ -132,14 +160,29 @@ private:
 		speechTool.uFlags = TTF_IDISHWND | TTF_TRACK;
 		speechTool.hwnd = hwnd;
 		speechTool.uId = reinterpret_cast<UINT_PTR>(hwnd);
-		static wchar_t greeting[] = L"Hello, world!";
-		speechTool.lpszText = greeting;
+		speechTool.lpszText = const_cast<wchar_t*>(speechText.Buffer());
 		if (!SendMessageW(speechBubble, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&speechTool)))
 		{
 			throw Exception(L"Cannot set system speech bubble text.");
 		}
+		SendMessageW(speechBubble, TTM_SETMAXTIPWIDTH, 0, 384);
 		SendMessageW(speechBubble, TTM_TRACKACTIVATE, TRUE, reinterpret_cast<LPARAM>(&speechTool));
 		UpdateSpeechPosition();
+
+		auto async = GetCurrentController()->AsyncService();
+		auto windowLifetime = lifetime;
+		agentRunner = Ptr(new DesktopAgentRunner(envFolder, memoryFolder, [async, windowLifetime](const WString& text)
+		{
+			async->InvokeInMainThread(nullptr, [windowLifetime, text]()
+			{
+				if (auto window = windowLifetime->window)
+				{
+					window->SetSpeechText(text);
+					window->agentRunner->RequestRound();
+				}
+			});
+		}));
+		if (!agentRunner->Start()) throw Exception(L"Cannot start desktop agent worker.");
 	}
 
 	void OnLeftButtonDown(GuiGraphicsComposition* sender, GuiMouseEventArgs& arguments)
@@ -202,12 +245,14 @@ public:
 	}
 
 	// GuiMain owns the catalog for the entire lifetime of this window.
-	FairyDesktopWindow(const FilePath& environment, const List<Ptr<DesktopTheme>>& desktopThemes, vuint64_t seed)
+	FairyDesktopWindow(const FilePath& environment, const FilePath& memory, const List<Ptr<DesktopTheme>>& desktopThemes, vuint64_t seed)
 		: envFolder(environment)
+		, memoryFolder(memory)
 		, themes(desktopThemes)
 		, selectedTheme(LoadSelectedDesktopTheme(envFolder, themes))
 		, playback(themes[selectedTheme], seed)
 	{
+		lifetime->window = this;
 		LoadThemeImages(themes[selectedTheme]);
 		fairyImage->SetImage(images[playback.CurrentFrame().GetFullPath()], 0);
 		auto menu = themeMenuItem->EnsureToolstripSubMenu();
@@ -251,6 +296,8 @@ public:
 
 	~FairyDesktopWindow()
 	{
+		lifetime->window = nullptr;
+		if (agentRunner) agentRunner->StopAndWait();
 		GetCurrentController()->CallbackService()->UninstallListener(this);
 		if (speechBubble) DestroyWindow(speechBubble);
 	}
@@ -269,12 +316,13 @@ void GuiMain()
 	auto root = executableFolder / L"../.."; // FatFish/<Configuration>
 #endif
 	auto envFolder = root / L"env";
+	auto memoryFolder = root / L"memory";
 	auto themesFolder = root / L"themes";
 	List<Ptr<DesktopTheme>> themes;
 	LoadDesktopThemes(themesFolder, themes);
 	std::random_device entropy;
 	auto seed = (static_cast<vuint64_t>(entropy()) << 32) | entropy();
-	FairyDesktopWindow window(envFolder, themes, seed);
+	FairyDesktopWindow window(envFolder, memoryFolder, themes, seed);
 	GetApplication()->Run(&window);
 }
 

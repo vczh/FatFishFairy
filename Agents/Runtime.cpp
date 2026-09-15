@@ -21,8 +21,9 @@ namespace fatfish
 ])json", parser);
 	}
 
-	FairyApplication::FairyApplication(const FilePath& envFolder, const FilePath& memoryFolder)
+	FairyApplication::FairyApplication(const FilePath& envFolder, const FilePath& memoryFolder, Ptr<CancellationToken> cancellationToken)
 		: memory(memoryFolder)
+		, cancellation(cancellationToken)
 	{
 		config = LoadApiConfig(envFolder, parser);
 		auto read = [&](const WString& name)
@@ -39,26 +40,29 @@ namespace fatfish
 		prompts.vision = read(L"Request_Vision.md");
 		prompts.fairy = read(L"Request_Fairy.md");
 		prompts.character = read(L"Character.md");
-		complete = [this](const WString& body) { return PostChatCompletion(config, body); };
+		complete = [this](const WString& body) { return PostChatCompletion(config, body, cancellation); };
 		capture = [](List<MonitorSnapshot>& snapshots) { CaptureMonitors(snapshots); };
-		fetch = [](const WString& url) { return HttpGet(url); };
+		fetch = [this](const WString& url) { return HttpGet(url, 20000, cancellation); };
 		Initialize();
 	}
 
 	FairyApplication::FairyApplication(const FilePath& memoryFolder, const ApiConfig& apiConfig, const AgentPrompts& agentPrompts,
-		Func<WString(const WString&)> completion, Func<void(List<MonitorSnapshot>&)> snapshots, Func<WebResponse(const WString&)> httpGet)
+		Func<WString(const WString&)> completion, Func<void(List<MonitorSnapshot>&)> snapshots, Func<WebResponse(const WString&)> httpGet,
+		Ptr<CancellationToken> cancellationToken)
 		: config(apiConfig)
 		, memory(memoryFolder)
 		, prompts(agentPrompts)
 		, complete(completion)
 		, capture(snapshots)
 		, fetch(httpGet)
+		, cancellation(cancellationToken)
 	{
 		Initialize();
 	}
 
 	WString FairyApplication::ExecuteTool(const WString& name, const WString& arguments, WString& spoken)
 	{
+		if (cancellation) cancellation->ThrowIfCancelled();
 		auto result = Ptr(new json::JsonObject);
 		try
 		{
@@ -129,6 +133,10 @@ namespace fatfish
 			}
 			SetBoolean(result, L"ok", true);
 		}
+		catch (const OperationCancelled&)
+		{
+			throw;
+		}
 		catch (const Exception& error)
 		{
 			// Invalid model tool requests are returned so the model can correct them.
@@ -181,6 +189,7 @@ namespace fatfish
 		WString spoken;
 		for (vint step = 0; step < 24; step++)
 		{
+			if (cancellation) cancellation->ThrowIfCancelled();
 			auto messages = Ptr(new json::JsonArray);
 			auto system = prompts.tools + L"\n\n" + prompts.guidance + L"\n\n" + (vision ? prompts.vision : prompts.fairy + L"\n\n" + prompts.character);
 			messages->items.Add(TextMessage(L"system", system));
@@ -192,6 +201,7 @@ namespace fatfish
 			SetString(request, L"tool_choice", vision && spoken.Length() == 0 ? L"required" : L"auto");
 			SetBoolean(request, L"stream", true);
 			auto response = complete(json::JsonToString(request));
+			if (cancellation) cancellation->ThrowIfCancelled();
 			Ptr<json::JsonObject> assistant;
 			try
 			{
@@ -239,8 +249,10 @@ namespace fatfish
 
 	WString FairyApplication::RunRound()
 	{
+		if (cancellation) cancellation->ThrowIfCancelled();
 		List<MonitorSnapshot> snapshots;
 		capture(snapshots);
+		if (cancellation) cancellation->ThrowIfCancelled();
 		if (snapshots.Count() == 0) throw Exception(L"No monitors were captured.");
 		auto parts = Ptr(new json::JsonArray);
 		for (auto&& snapshot : snapshots)
@@ -285,5 +297,74 @@ namespace fatfish
 			while (fairyHistory->items.Count() > previousCount) fairyHistory->items.RemoveAt(fairyHistory->items.Count() - 1);
 			throw;
 		}
+	}
+
+	DesktopAgentRunner::DesktopAgentRunner(const FilePath& envFolder, const FilePath& memoryFolder, Func<void(const WString&)> publishResult)
+		: DesktopAgentRunner({}, Ptr(new CancellationToken), publishResult)
+	{
+		createApplication = [this, envFolder, memoryFolder]()
+		{
+			return Ptr(new FairyApplication(envFolder, memoryFolder, cancellation));
+		};
+	}
+
+	DesktopAgentRunner::DesktopAgentRunner(Func<Ptr<FairyApplication>()> factory, Ptr<CancellationToken> cancellationToken, Func<void(const WString&)> publishResult)
+		: createApplication(factory)
+		, publish(publishResult)
+		, cancellation(cancellationToken)
+	{
+		CHECK_ERROR(nextRound.CreateAutoUnsignal(true), L"DesktopAgentRunner#Cannot create round event.");
+	}
+
+	void DesktopAgentRunner::Run()
+	{
+		Ptr<FairyApplication> application;
+		WaitableObject* events[] = { &cancellation->Event(), &nextRound };
+		bool abandoned = false;
+		while (WaitableObject::WaitAny(events, 2, &abandoned) == 1)
+		{
+			WString result;
+			bool failed = false;
+			try
+			{
+				cancellation->ThrowIfCancelled();
+				if (!application) application = createApplication();
+				result = application->RunRound();
+			}
+			catch (const OperationCancelled&)
+			{
+				return;
+			}
+			catch (const Exception& error)
+			{
+				result = L"调用大模型发生错误：" + error.Message();
+				failed = true;
+			}
+			catch (const Error& error)
+			{
+				result = L"调用大模型发生错误：" + WString(error.Description());
+				failed = true;
+			}
+			if (cancellation->IsCancelled()) return;
+			publish(result);
+			// A persistent configuration/network error should not spin or flood requests.
+			if (failed && cancellation->Event().WaitForTime(1000)) return;
+		}
+	}
+
+	void DesktopAgentRunner::RequestRound()
+	{
+		nextRound.Signal();
+	}
+
+	void DesktopAgentRunner::StopAndWait()
+	{
+		cancellation->Cancel();
+		if (GetState() != Thread::NotStarted) Wait();
+	}
+
+	DesktopAgentRunner::~DesktopAgentRunner()
+	{
+		StopAndWait();
 	}
 }

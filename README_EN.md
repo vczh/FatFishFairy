@@ -4,7 +4,7 @@
 
 A desktop fairy for Windows, with two applications:
 
-- **FatFishFairy**: displays an always-on-top transparent character window, plays animations, and supports theme switching and dragging while remembering the selected theme and position. Model integration is not yet available, so no API key is required.
+- **FatFishFairy**: displays an always-on-top transparent character window, continuously observes the screen, maintains memories, and responds in a talking bubble. It plays animations and supports theme switching and dragging while remembering the selected theme and position.
 - **FatFishCli**: observes the screen on a keypress. A vision model describes screenshots from all monitors, then a fairy model uses that description to maintain memories and respond in the terminal.
 
 ## Preparation
@@ -50,9 +50,9 @@ Pop-Location
 
 The desktop project automatically invokes these tools to generate UI resources during its build. See [Release/Tools/README.md](Release/Tools/README.md) for other ways to build the tools.
 
-### Configure models (FatFishCli only)
+### Configure models
 
-Before using the CLI for the first time, create a local configuration from the template. If you already have one, edit it directly:
+Before using FatFishFairy or FatFishCli for the first time, create a local configuration from the template. If you already have one, edit it directly:
 
 ```powershell
 Copy-Item env/apikey-template.json env/apikey.json
@@ -70,7 +70,7 @@ Edit `env/apikey.json`:
 
 The service must support the OpenAI v1 Chat Completions protocol. Configure each role separately; both may use the same model ID. The legacy `chat_model` field remains an alias for `fairy_model`; if both are present, their values must match.
 
-Git ignores `env/apikey.json`; do not commit API keys. The desktop application and offline unit tests do not need this configuration.
+Git ignores `env/apikey.json`; do not commit API keys. Offline unit tests do not need this configuration, and local integration tests use separate fixture configuration.
 
 ## Build
 
@@ -98,7 +98,9 @@ The directory contains `FatFishFairy.exe`, `FatFishCli.exe`, and `UnitTest.exe`.
 ```
 
 - Displays a 384×384 transparent, frameless character window that stays on top.
-- Shows a system balloon saying “Hello, world!” above the window at startup, with its pointer facing down toward the window's top center. It follows the window and stays visible until the application closes; its placement adjusts near screen edges to keep it visible.
+- Shows a system balloon saying “Hello, world!” above the window at startup, then automatically captures all monitors, runs the vision model followed by the fairy model, replaces the bubble text with the fairy's speech, and immediately starts the next round.
+- The bubble's pointer faces down toward the window's top center and follows the window; its placement adjusts near screen edges to keep it visible. The latest speech stays visible until the next update. When the fairy chooses to remain silent, the bubble clears and hides until there is new text.
+- Model configuration or request failures appear in the bubble with the prefix “调用大模型发生错误：” (An error occurred while calling the model), followed by an automatic retry after one second. Correcting missing or invalid model configuration allows initialization to retry.
 - Hold the left mouse button on the character to drag it. Releasing the button saves its position, which is restored on the next launch.
 - Right-click to open the menu, switch character themes in the “主题” (Theme) submenu, or select “退出” (Exit) to close the application. Themes appear by their Chinese display names in `themes/theme.json` order, with a check beside the current theme.
 - Switching themes immediately picks an animation from the new theme and starts at its first frame, then saves the choice for the next launch. If no theme has been saved or the saved theme no longer exists, the first theme in the list is used.
@@ -121,7 +123,7 @@ The window position and selected theme are saved in `env/config.json`, which nor
 
 A missing file or coordinate defaults the coordinate to zero. Negative coordinates on other monitors are supported. `selectedTheme` uses a theme folder key from `themes/theme.json` and must be a string; if it is missing or no key matches exactly, the first theme is used. Dragging and theme switching create or update the file while preserving each other's settings and other fields; Git ignores this file. Invalid configuration, invalid coordinates, an invalid theme selection type, or missing or invalid theme images cause an error.
 
-The desktop window currently plays animations and displays a fixed startup greeting; it does not automatically capture the screen or call models. Use the CLI below for screen observation and model responses.
+The desktop application continuously captures the screen and contacts the configured model service. Screenshots are processed in memory and sent to the vision model; the fairy model receives the complete observation text and the local date and time when that observation finishes. The vision model starts a new session each round, while the fairy model retains its conversation within the process and can maintain files in `memory`. Dragging, theme switching, and exit remain available during model requests; exiting cancels pending requests and stops the loop.
 
 ## Use FatFishCli
 
@@ -184,11 +186,11 @@ After building the corresponding applications, run these in PowerShell 7:
 # CLI: real screen capture, PNG encoding, local HTTP requests, and memory writes
 & ./FatFish/UnitTest/Invoke.ps1 -Configuration Debug -Platform x64
 
-# Desktop window: transparency, topmost behavior, animation, balloon tracking, dragging, position restore, theme menu, switching and restore, and menu exit
+# Desktop window: animation and interaction, continuous model calls, bubble updates, error recovery, and exit during requests
 & ./FatFish/UnitTest/Invoke-Fairy.ps1 -Configuration Debug -Platform x64
 ```
 
-The CLI integration test sends screenshots only to a local loopback test server. It does not save images or access a real model service. The desktop integration test uses a temporary application, themes, and configuration to check theme menu order, saved switching, startup restoration, and fallback for unknown theme keys, without reading real configuration or credentials. Add `-ScreenshotPath PATH` to save menu screenshots for visual checks of the Chinese theme names and selection mark. The test moves the mouse and restores the pointer afterward.
+Both integration tests send monitor screenshots only to a local loopback test server. They do not save those screenshots or access a real model service. The desktop integration test uses temporary application, theme, configuration, and memory directories to check transparency, topmost behavior, animation, balloon tracking, dragging and position restore, theme menu order, saved switching, startup restoration, and fallback for unknown theme keys. It also checks continuous model calls, updated and silent speech, error display and recovery, and menu exit while a request is pending. Tests do not read real configuration or credentials. Add `-ScreenshotPath PATH` to save test window, menu, and bubble screenshots for visual checks of the Chinese theme names, selection mark, and complete speech. The actual on-screen capture of long speech ends in `.speech-desktop.png`. The test moves the mouse and restores the pointer afterward.
 
 ### Real-model verification
 
