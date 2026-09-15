@@ -7,6 +7,10 @@ A desktop fairy for Windows, with two applications:
 - **FatFishFairy**: displays an always-on-top transparent character window, continuously observes the screen, maintains memories, and responds in a talking bubble. It plays animations and supports theme switching and dragging while remembering the selected theme and position.
 - **FatFishCli**: observes the screen on a keypress. A vision model describes screenshots from all monitors, then a fairy model uses that description to maintain memories and respond in the terminal.
 
+## License
+
+License for this repo does not cover all image files in `themes` folder. All reference.md are downloaded and others are generated from them by AI.
+
 ## Preparation
 
 ### Development environment
