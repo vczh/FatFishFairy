@@ -342,6 +342,27 @@ function Wait-Bubble([string]$expectedText, [switch]$Prefix) {
   throw "The talking balloon did not display the expected result (expected length $($expectedText.Length), actual length $($lastText.Length))."
 }
 
+function Read-SpeechHistory {
+  if (-not (Test-Path -LiteralPath $historyPath)) { return '' }
+  return [Text.UTF8Encoding]::new($false, $true).GetString([IO.File]::ReadAllBytes($historyPath)).TrimStart([char]0xFEFF)
+}
+
+function Assert-SpeechHistory([string]$expected) {
+  if ((Read-SpeechHistory) -cne $expected) { throw 'Speech history changed before a nonempty fairy round completed.' }
+}
+
+function Assert-SpeechHistoryAppend([string]$previous, [string]$speech, [datetime]$earliest) {
+  $history = Read-SpeechHistory
+  $pattern = '\A' + [regex]::Escape($previous) + '# Speak (?<timestamp>[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}-[0-9]{2}-[0-9]{2})\n\n' + [regex]::Escape($speech) + '\n\n\z'
+  $entry = [regex]::Match($history, $pattern)
+  if (-not $entry.Success) { throw 'Speech history did not append exactly one UTF-8 Markdown entry containing the complete fairy speech.' }
+  $timestamp = [datetime]::ParseExact($entry.Groups['timestamp'].Value, 'yyyy-MM-dd HH-mm-ss', [Globalization.CultureInfo]::InvariantCulture)
+  if ($timestamp -lt $earliest.AddSeconds(-1) -or $timestamp -gt [datetime]::Now) {
+    throw 'Speech history must timestamp completed speech using the current local date and time.'
+  }
+  return $history
+}
+
 function Assert-BubblePlacement($mainWindow, $balloon) {
   $workArea = [Windows.Forms.Screen]::FromHandle($mainWindow.Handle).WorkingArea
   if ($balloon.X -lt $workArea.Left -or $balloon.Y -lt $workArea.Top -or ($balloon.X + $balloon.Width) -gt $workArea.Right -or ($balloon.Y + $balloon.Height) -gt $workArea.Bottom) {
@@ -542,12 +563,15 @@ try {
   [void][IO.Directory]::CreateDirectory((Join-Path $themesFolder 'loli_maid'))
   [IO.File]::WriteAllText((Join-Path $themesFolder 'loli_maid/Character.md'), $speechData.fallbackCharacter, [Text.UTF8Encoding]::new($false))
   $configPath = Join-Path $fixture 'env/config.json'
+  $historyPath = Join-Path $fixture 'env/history.md'
+  $history = ''
   [IO.File]::WriteAllText($configPath, '{"windowX":123,"windowY":91,"retained":{"value":"untouched"}}', [Text.UTF8Encoding]::new($false))
   $application = Start-Process -FilePath (Join-Path $fixtureOutput 'FatFishFairy.exe') -WorkingDirectory $env:SystemRoot -WindowStyle Hidden -PassThru
   $main = Wait-MainWindow
   Assert-Window $main 123 91
   $greeting = Assert-Greeting $main
   Wait-ModelRequest 1
+  Assert-SpeechHistory $history
   Start-Sleep -Milliseconds 200
   $frame = [FatFishFairySmoke.Native]::Capture($main.Handle, $ScreenshotPath)
   if (-not [string]::IsNullOrEmpty($ScreenshotPath)) {
@@ -607,17 +631,21 @@ try {
   # and menu selection. Now complete each round and hold the following request,
   # making speech replacement and automatic restart deterministic to inspect.
   Complete-ModelRequests 1 2
+  Assert-SpeechHistory $history
   # Change selection while a fairy request is pending. Its next tool-feedback
   # submission must use the new character without restarting this round.
   Select-Theme $positioned 2
   Complete-ModelRequests 3 3
   Select-Theme $positioned 1
   Complete-ModelRequests 4 4
+  Assert-SpeechHistory $history
   # Switch during the last fairy follow-up so the following round must use the
   # missing-character fallback without resetting the conversation.
   Select-Theme $positioned 2
+  $speechStarted = [datetime]::Now
   Complete-ModelRequests 5 5
   $spoken = Wait-Bubble $completeSpeech
+  $history = Assert-SpeechHistoryAppend $history $completeSpeech $speechStarted
   if ($spoken.Width -le $greeting.Width -or $spoken.Height -le $greeting.Height) { throw 'The native balloon did not resize for a long multiline model response.' }
   Assert-BubblePlacement $positioned $spoken
   $workArea = [Windows.Forms.Screen]::FromHandle($positioned.Handle).WorkingArea
@@ -637,15 +665,20 @@ try {
   Select-Theme $positioned 1
   Complete-ModelRequests 9 9
   Wait-Bubble ''
+  Assert-SpeechHistory $history
   Complete-ModelRequests 10 10
   [void](Wait-Bubble '调用大模型发生错误：' -Prefix)
+  Assert-SpeechHistory $history
+  $speechStarted = [datetime]::Now
   Complete-ModelRequests 11 14
   $recovered = Wait-Bubble $speechData.recoveredSpeech
+  $history = Assert-SpeechHistoryAppend $history $speechData.recoveredSpeech $speechStarted
   Assert-BubblePlacement $positioned $recovered
   Complete-ModelRequests 15 15
   # The http_get tool's request 16 has no release file: exit must cancel it.
   # The following restart/fallback runs also exit during a pending model POST.
   Close-ThroughMenu $positioned
+  Assert-SpeechHistory $history
   Assert-FixtureServer
   Write-Output 'Native greeting shape/movement, responsive UI during a pending request, complete multiline speech, empty speech, error recovery, theme character switching and fallback with persistent fairy history, and exit during a pending request passed.'
 
@@ -656,10 +689,12 @@ try {
   Assert-Window $restarted $saved.windowX $saved.windowY
   [void](Assert-Greeting $restarted)
   Wait-ModelRequest 1
+  Assert-SpeechHistory $history
   Start-Sleep -Milliseconds 200
   Assert-Theme $restarted 1
   Complete-ModelRequests 1 2
   Close-ThroughMenu $restarted
+  Assert-SpeechHistory $history
   Assert-FixtureServer
   Write-Output 'Restart restored the dragged position and selected theme, submitted its character prompt, and exited with code 0.'
 
@@ -676,6 +711,7 @@ try {
   Assert-Theme $fallback 0
   Complete-ModelRequests 1 2
   Close-ThroughMenu $fallback
+  Assert-SpeechHistory $history
   Assert-FixtureServer
   Write-Output 'Unknown selectedTheme defaulted to the first theme and its character prompt; final menu exit completed with code 0.'
 
@@ -686,7 +722,9 @@ try {
   $unconfigured = Wait-MainWindow
   [void](Wait-Bubble '调用大模型发生错误：' -Prefix)
   Close-ThroughMenu $unconfigured
+  Assert-SpeechHistory $history
   Write-Output 'Missing model configuration appeared in the error balloon and the desktop remained usable.'
+  Write-Output 'UTF-8 speech history recorded complete nonempty fairy rounds with local timestamps, preserved prior entries across restarts, and excluded greetings, observations, partial rounds, silence and errors.'
 } catch {
   $testFailure = $_
   throw

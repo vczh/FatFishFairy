@@ -1,4 +1,5 @@
 #include "Runtime.h"
+#include "Desktop.h"
 
 using namespace vl;
 using namespace vl::collections;
@@ -73,7 +74,7 @@ namespace fatfish
 		Initialize();
 	}
 
-	WString FairyApplication::ExecuteTool(const WString& name, const WString& arguments, WString& spoken)
+	WString FairyApplication::ExecuteTool(const WString& name, const WString& arguments, WString& spoken, bool& speechSubmitted)
 	{
 		if (cancellation) cancellation->ThrowIfCancelled();
 		auto result = Ptr(new json::JsonObject);
@@ -132,6 +133,7 @@ namespace fatfish
 			else if (name == L"speak")
 			{
 				auto text = GetString(args, L"text");
+				speechSubmitted = true;
 				// Both prompts request one speak, but retain all speech if a model calls it again.
 				// Empty speech is valid for a silent fairy and must not add separator-only output.
 				if (text.Length() > 0)
@@ -200,6 +202,7 @@ namespace fatfish
 	WString FairyApplication::RunAgent(bool vision, Ptr<json::JsonArray> history)
 	{
 		WString spoken;
+		bool speechSubmitted = false;
 		for (vint step = 0; step < 24; step++)
 		{
 			if (cancellation) cancellation->ThrowIfCancelled();
@@ -218,7 +221,8 @@ namespace fatfish
 			SetString(request, L"model", vision ? config.visionModel : config.fairyModel);
 			SetField(request, L"messages", messages);
 			SetField(request, L"tools", toolSchema);
-			SetString(request, L"tool_choice", vision && spoken.Length() == 0 ? L"required" : L"auto");
+			// A fairy must explicitly speak or submit an empty speak before tools become optional.
+			SetString(request, L"tool_choice", (vision ? spoken.Length() == 0 : !speechSubmitted) ? L"required" : L"auto");
 			SetBoolean(request, L"stream", true);
 			auto response = complete(json::JsonToString(request));
 			if (cancellation) cancellation->ThrowIfCancelled();
@@ -252,7 +256,7 @@ namespace fatfish
 				for (auto call : calls->items)
 				{
 					auto function = GetField(call, L"function");
-					auto output = ExecuteTool(GetString(function, L"name"), GetString(function, L"arguments"), spoken);
+					auto output = ExecuteTool(GetString(function, L"name"), GetString(function, L"arguments"), spoken, speechSubmitted);
 					auto tool = TextMessage(L"tool", output);
 					SetString(tool, L"tool_call_id", GetString(call, L"id"));
 					history->items.Add(tool);
@@ -321,7 +325,8 @@ namespace fatfish
 
 	DesktopAgentRunner::DesktopAgentRunner(const FilePath& envFolder, const FilePath& memoryFolder,
 		const FilePath& initialCharacterFile, const FilePath& fallbackFile, Func<void(const WString&)> publishResult)
-		: DesktopAgentRunner({}, Ptr(new CancellationToken), publishResult)
+		: DesktopAgentRunner({}, Ptr(new CancellationToken), publishResult,
+			[envFolder](const WString& text) { AppendSpeechHistory(envFolder, text); })
 	{
 		characterFile = initialCharacterFile;
 		fallbackCharacterFile = fallbackFile;
@@ -350,9 +355,11 @@ namespace fatfish
 		}
 	}
 
-	DesktopAgentRunner::DesktopAgentRunner(Func<Ptr<FairyApplication>()> factory, Ptr<CancellationToken> cancellationToken, Func<void(const WString&)> publishResult)
+	DesktopAgentRunner::DesktopAgentRunner(Func<Ptr<FairyApplication>()> factory, Ptr<CancellationToken> cancellationToken,
+		Func<void(const WString&)> publishResult, Func<void(const WString&)> saveSpeech)
 		: createApplication(factory)
 		, publish(publishResult)
+		, persistSpeech(saveSpeech)
 		, cancellation(cancellationToken)
 	{
 		CHECK_ERROR(nextRound.CreateAutoUnsignal(true), L"DesktopAgentRunner#Cannot create round event.");
@@ -372,6 +379,8 @@ namespace fatfish
 				cancellation->ThrowIfCancelled();
 				if (!application) application = createApplication();
 				result = application->RunRound();
+				cancellation->ThrowIfCancelled();
+				if (result.Length() > 0 && persistSpeech) persistSpeech(result);
 			}
 			catch (const OperationCancelled&)
 			{

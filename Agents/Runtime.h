@@ -31,7 +31,7 @@ namespace fatfish
 		vl::Ptr<CancellationToken>                      cancellation;
 
 		vl::WString                                     RunAgent(bool vision, vl::Ptr<vl::glr::json::JsonArray> history);
-		vl::WString                                     ExecuteTool(const vl::WString& name, const vl::WString& arguments, vl::WString& spoken);
+		vl::WString                                     ExecuteTool(const vl::WString& name, const vl::WString& arguments, vl::WString& spoken, bool& speechSubmitted);
 		void                                            Initialize();
 
 	public:
@@ -61,6 +61,7 @@ namespace fatfish
 	private:
 		vl::Func<vl::Ptr<FairyApplication>()>            createApplication;
 		vl::Func<void(const vl::WString&)>               publish;
+		vl::Func<void(const vl::WString&)>               persistSpeech;
 		vl::Ptr<CancellationToken>                      cancellation;
 		vl::EventObject                                nextRound;
 		vl::SpinLock                                   lockCharacter;
@@ -78,7 +79,8 @@ namespace fatfish
 		                                                    vl::Func<void(const vl::WString&)> publishResult);
 		// Inject a factory to test the actual worker with offline model responses.
 		                                                DesktopAgentRunner(vl::Func<vl::Ptr<FairyApplication>()> factory,
-		                                                    vl::Ptr<CancellationToken> cancellationToken, vl::Func<void(const vl::WString&)> publishResult);
+		                                                    vl::Ptr<CancellationToken> cancellationToken, vl::Func<void(const vl::WString&)> publishResult,
+		                                                    vl::Func<void(const vl::WString&)> saveSpeech = {});
 		                                                ~DesktopAgentRunner();
 		// Update selection without interrupting the current round or resetting fairy history.
 		void                                            SetCharacterFile(const vl::filesystem::FilePath& selectedFile);

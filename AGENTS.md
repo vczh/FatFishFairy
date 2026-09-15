@@ -173,6 +173,7 @@ You are not recommended to modify this library, but if you really need to:
 - All source files about agents and other features should be in the `REPO-ROOT/Agents` folder.
 - Keep test cases and fixtures in `REPO-ROOT/FatFish/UnitTest`, compiled only by the `UnitTest` project. Keep all test PowerShell scripts directly in this folder. Do not expose test runners from feature headers or add a `--self-test` mode to `FatFishCli`.
 - Prompts must require both the vision agent and the fairy agent to call `speak` exactly once per observation request, including all tool-feedback follow-ups. Vision submits its complete nonempty observation; fairy uses an empty `text` when it has nothing to say.
+- Request `tool_choice: required` until the vision has submitted nonempty speech, or the fairy has submitted a valid `speak` (including empty text), then use `auto`. Keep requiring tools across other tool calls and invalid speech arguments so the fairy does not substitute ordinary assistant prose for its bubble output.
 - The runtime must tolerate extra `speak` calls from either agent: concatenate all successfully parsed nonempty texts in execution order with newlines, both within one response and across follow-ups. Do not discard repeated text or reject extra calls merely for exceeding the prompted count. Empty texts add no separator.
 - Keep speech accumulation local to each agent's current round. Pass the full vision result to the fairy and return the full fairy result; ordinary assistant text is not part of either result.
 
@@ -265,6 +266,10 @@ Whenever the fairy speaks, append it to a git-ignored file `REPO-ROOT/env/histor
 content
 ```
 Create this file if it doesn't exist.
+
+Log one entry for each completed nonempty desktop fairy round, containing the complete speech accumulated across its tool calls and follow-ups. Use local system time when appending, with zero-padded fields and a 24-hour clock. Preserve the UTF-8 text and line breaks, separate entries with a blank line, and append without rewriting existing history. Startup greetings, vision observations, empty results and error messages are not speech history entries. `DesktopAgentRunner` performs this file I/O on its worker before publishing the result; write failures use the existing error bubble and retry path. `FatFishCli` does not write this desktop speech log.
+
+Offline tests must cover history creation, UTF-8 multiline appends, preservation across reopening, timestamp formatting, silence, write failures and worker publication order. The desktop integration test must verify the saved complete speech, silent/error exclusions and preservation across restarts.
 
 ### Playing Animation
 

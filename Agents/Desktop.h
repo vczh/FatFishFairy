@@ -16,6 +16,9 @@ namespace fatfish
 	// Coordinates must fit the signed 32-bit Windows desktop coordinate range.
 	extern DesktopPosition LoadDesktopPosition(const vl::filesystem::FilePath& envFolder);
 	extern void SaveDesktopPosition(const vl::filesystem::FilePath& envFolder, DesktopPosition position);
+	// Append complete nonempty fairy speech to history.md as UTF-8 with local time.
+	// Preserve existing bytes; create the supplied folder and file when needed.
+	extern void AppendSpeechHistory(const vl::filesystem::FilePath& envFolder, const vl::WString& text);
 
 	class ThemeAnimation : public vl::Object
 	{

@@ -1,5 +1,6 @@
 #include "Desktop.h"
 #include "Json.h"
+#include <VlppOS.Windows.h>
 
 using namespace vl;
 using namespace vl::collections;
@@ -76,6 +77,33 @@ namespace fatfish
 		SetInteger(object, L"windowX", position.x);
 		SetInteger(object, L"windowY", position.y);
 		WriteDesktopConfig(envFolder, object);
+	}
+
+	void AppendSpeechHistory(const FilePath& envFolder, const WString& text)
+	{
+		if (text.Length() == 0) return;
+		if (!Folder(envFolder).Exists() && !Folder(envFolder).Create(true))
+			throw Exception(L"Cannot create the supplied environment folder for speech history.");
+		auto now = DateTime::LocalTime();
+		auto locale = Locale::Invariant();
+		auto timestamp = locale.FormatDate(L"yyyy-MM-dd", now) + L" " + locale.FormatTime(L"HH-mm-ss", now);
+		auto entry = wtou8(L"# Speak " + timestamp + L"\n\n" + text + L"\n\n");
+		auto path = envFolder / L"history.md";
+		// Vlpp FileStream has no append mode: both writable modes truncate the file.
+		auto file = CreateFileW(path.GetFullPath().Buffer(), FILE_APPEND_DATA, FILE_SHARE_READ,
+			nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+		if (file == INVALID_HANDLE_VALUE) throw Exception(L"Cannot open speech history: " + path.GetFullPath());
+		vint offset = 0;
+		while (offset < entry.Length())
+		{
+			auto remaining = entry.Length() - offset;
+			auto count = (DWORD)(remaining > 0xFFFFFFFFLL ? 0xFFFFFFFFLL : remaining);
+			DWORD written = 0;
+			if (!WriteFile(file, entry.Buffer() + offset, count, &written, nullptr) || written == 0) break;
+			offset += written;
+		}
+		auto closed = CloseHandle(file);
+		if (offset != entry.Length() || !closed) throw Exception(L"Cannot append speech history: " + path.GetFullPath());
 	}
 
 	vint LoadSelectedDesktopTheme(const FilePath& envFolder, const List<Ptr<DesktopTheme>>& themes)

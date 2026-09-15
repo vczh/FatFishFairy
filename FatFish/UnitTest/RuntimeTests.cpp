@@ -1,4 +1,5 @@
 #include "../../Agents/Runtime.h"
+#include "../../Agents/Desktop.h"
 #include <Windows.h>
 
 using namespace vl;
@@ -91,6 +92,16 @@ public:
 	}
 };
 
+U8String ReadRuntimeFixtureBytes(const FilePath& path)
+{
+	stream::FileStream file(path.GetFullPath(), stream::FileStream::ReadOnly);
+	TEST_ASSERT(file.IsAvailable() && file.Size() > 0 && file.Size() < 4096);
+	char8_t bytes[4096];
+	auto length = static_cast<vint>(file.Size());
+	TEST_ASSERT(file.Read(bytes, length) == length);
+	return U8String::CopyFrom(bytes, length);
+}
+
 class RuntimeWorkerFixture
 {
 public:
@@ -148,12 +159,64 @@ public:
 
 TEST_FILE
 {
+	TEST_CASE(L"Speech history creates the supplied folder and appends complete UTF-8 entries with local timestamps")
+	{
+		RuntimeTestFolder folder;
+		RuntimeTestClock clock;
+		auto environment = folder.root / L"custom-location" / L"settings";
+		auto history = environment / L"history.md";
+		AppendSpeechHistory(environment, L"");
+		TEST_ASSERT(!Folder(environment).Exists() && clock.localTimeCalls == 0);
+		clock.currentTime = DateTime::FromDateTime(2027, 2, 3, 4, 5, 6).osInternal;
+		AppendSpeechHistory(environment, L"你好，鲸鱼！\n第二行\n重复\n重复");
+		auto first = wtou8(L"# Speak 2027-02-03 04-05-06\n\n你好，鲸鱼！\n第二行\n重复\n重复\n\n");
+		TEST_ASSERT(ReadRuntimeFixtureBytes(history) == first && clock.localTimeCalls == 1);
+		clock.currentTime = DateTime::FromDateTime(2027, 12, 31, 23, 59, 59).osInternal;
+		AppendSpeechHistory(environment, L"下一次发言");
+		auto expected = first + wtou8(L"# Speak 2027-12-31 23-59-59\n\n下一次发言\n\n");
+		TEST_ASSERT(ReadRuntimeFixtureBytes(history) == expected && clock.localTimeCalls == 2);
+		AppendSpeechHistory(environment, L"");
+		TEST_ASSERT(ReadRuntimeFixtureBytes(history) == expected && clock.localTimeCalls == 2);
+		TEST_ASSERT(!Folder(folder.root / L"env").Exists());
+	});
+
+	TEST_CASE(L"Speech history preserves pre-existing bytes and reports unavailable output paths")
+	{
+		RuntimeTestFolder folder;
+		RuntimeTestClock clock;
+		clock.currentTime = DateTime::FromDateTime(2027, 1, 1, 0, 0, 0).osInternal;
+		auto history = folder.root / L"history.md";
+		auto previous = U8String(u8"\uFEFF# Existing\r\n\r\n已有内容\r\n\r\n");
+		{
+			stream::FileStream file(history.GetFullPath(), stream::FileStream::WriteOnly);
+			TEST_ASSERT(file.IsAvailable() && file.Write(const_cast<char8_t*>(previous.Buffer()), previous.Length()) == previous.Length());
+		}
+		AppendSpeechHistory(folder.root, L"保留旧文件");
+		auto expected = previous + wtou8(L"# Speak 2027-01-01 00-00-00\n\n保留旧文件\n\n");
+		TEST_ASSERT(ReadRuntimeFixtureBytes(history) == expected);
+
+		auto locked = CreateFileW(history.GetFullPath().Buffer(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+		TEST_ASSERT(locked != INVALID_HANDLE_VALUE);
+		bool rejectedLockedFile = false;
+		try { AppendSpeechHistory(folder.root, L"写入失败"); }
+		catch (const Exception&) { rejectedLockedFile = true; }
+		auto closed = CloseHandle(locked);
+		TEST_ASSERT(rejectedLockedFile && closed && ReadRuntimeFixtureBytes(history) == expected);
+		TEST_EXCEPTION(AppendSpeechHistory(history / L"invalid-folder", L"写入失败"), Exception, [](const Exception&) {});
+		TEST_ASSERT(File(history).Delete() && Folder(history).Create(false));
+		TEST_EXCEPTION(AppendSpeechHistory(folder.root, L"写入失败"), Exception, [](const Exception&) {});
+	});
+
 	TEST_CASE(L"Desktop worker starts immediately and retains its session while waiting for requested rounds")
 	{
 		RuntimeWorkerFixture fixture;
 		EventObject published;
 		TEST_ASSERT(published.CreateAutoUnsignal(false));
 		List<WString> results;
+		List<WString> persisted;
+		List<vint> persistedAtPublication;
+		auto callingThread = GetCurrentThreadId();
+		DWORD persistenceThread = 0;
 		vint factoryCalls = 0;
 		DesktopAgentRunner runner([&]()
 		{
@@ -162,7 +225,12 @@ TEST_FILE
 		}, fixture.cancellation, [&](const WString& result)
 		{
 			results.Add(result);
+			persistedAtPublication.Add(persisted.Count());
 			published.Signal();
+		}, [&](const WString& speech)
+		{
+			persisted.Add(speech);
+			persistenceThread = GetCurrentThreadId();
 		});
 		TEST_ASSERT(runner.Start());
 		auto startedImmediately = published.WaitForTime(5000);
@@ -171,6 +239,9 @@ TEST_FILE
 		auto secondRoundCompleted = published.WaitForTime(5000);
 		runner.StopAndWait();
 		// Only inspect worker-owned collections after joining the thread.
+		TEST_ASSERT(persisted.Count() == 1 && persisted[0] == results[0]);
+		TEST_ASSERT(persistedAtPublication.Count() == 2 && persistedAtPublication[0] == 1 && persistedAtPublication[1] == 1);
+		TEST_ASSERT(persistenceThread != 0 && persistenceThread != callingThread);
 		TEST_ASSERT(startedImmediately && waitedForRequest && secondRoundCompleted);
 		TEST_ASSERT(factoryCalls == 1 && fixture.captures == 2 && fixture.requests.Count() == 8);
 		TEST_ASSERT(results.Count() == 2 && results[0] == L"第一轮回应" && results[1] == L"");
@@ -180,6 +251,7 @@ TEST_FILE
 		{
 			auto request = ParseJson(fixture.requests[i], parser);
 			TEST_ASSERT(GetString(request, L"model") == (i % 4 < 2 ? fixture.config.visionModel : fixture.config.fairyModel));
+			TEST_ASSERT(GetString(request, L"tool_choice") == (i % 2 == 0 ? L"required" : L"auto")); // Require speech each round; a successful empty fairy speak also enables completion.
 			TEST_ASSERT(GetField(request, L"messages").Cast<json::JsonArray>()->items.Count() == expectedCounts[i]);
 		}
 		auto firstFairy = GetField(ParseJson(fixture.requests[2], parser), L"messages").Cast<json::JsonArray>();
@@ -194,6 +266,7 @@ TEST_FILE
 		EventObject published;
 		TEST_ASSERT(published.CreateAutoUnsignal(false));
 		List<WString> results;
+		List<WString> persisted;
 		vint factoryCalls = 0;
 		DesktopAgentRunner runner([&]() -> Ptr<FairyApplication>
 		{
@@ -203,6 +276,9 @@ TEST_FILE
 		{
 			results.Add(result);
 			published.Signal();
+		}, [&](const WString& speech)
+		{
+			persisted.Add(speech);
 		});
 		TEST_ASSERT(runner.Start());
 		auto reportedFailure = published.WaitForTime(5000);
@@ -211,8 +287,47 @@ TEST_FILE
 		auto recovered = published.WaitForTime(5000);
 		runner.StopAndWait();
 		TEST_ASSERT(reportedFailure && delayedRetry && recovered);
+		TEST_ASSERT(persisted.Count() == 1 && persisted[0] == results[1]);
 		TEST_ASSERT(factoryCalls == 2 && fixture.captures == 1 && fixture.requests.Count() == 4);
 		TEST_ASSERT(results.Count() == 2 && results[0] == L"调用大模型发生错误：合成配置错误" && results[1] == L"第一轮回应");
+	});
+
+	TEST_CASE(L"Desktop worker reports speech persistence failures and recovers on a delayed round")
+	{
+		RuntimeWorkerFixture fixture;
+		EventObject published;
+		TEST_ASSERT(published.CreateAutoUnsignal(false));
+		List<WString> results;
+		List<WString> persisted;
+		vint persistenceAttempts = 0;
+		DesktopAgentRunner runner([&]()
+		{
+			return fixture.Create([&](const WString& body)
+			{
+				auto response = fixture.Complete(body);
+				if (fixture.requests.Count() == 7)
+					return WString(LR"({"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","tool_calls":[{"id":"recovered","type":"function","function":{"name":"speak","arguments":"{\"text\":\"恢复后的回应\"}"}}]}}]})");
+				return response;
+			});
+		}, fixture.cancellation, [&](const WString& result)
+		{
+			results.Add(result);
+			published.Signal();
+		}, [&](const WString& speech)
+		{
+			if (persistenceAttempts++ == 0) throw Exception(L"合成历史写入错误");
+			persisted.Add(speech);
+		});
+		TEST_ASSERT(runner.Start());
+		auto reportedFailure = published.WaitForTime(5000);
+		runner.RequestRound();
+		auto delayedRetry = !published.WaitForTime(100);
+		auto recovered = published.WaitForTime(5000);
+		runner.StopAndWait();
+		TEST_ASSERT(reportedFailure && delayedRetry && recovered);
+		TEST_ASSERT(results.Count() == 2 && results[0] == L"调用大模型发生错误：合成历史写入错误" && results[1] == L"恢复后的回应");
+		TEST_ASSERT(persistenceAttempts == 2 && persisted.Count() == 1 && persisted[0] == results[1]);
+		TEST_ASSERT(fixture.captures == 2 && fixture.requests.Count() == 8);
 	});
 
 	TEST_CASE(L"Stopping the desktop worker interrupts its failure retry delay")
@@ -240,30 +355,35 @@ TEST_FILE
 		TEST_ASSERT(reportedFailure && stoppedDuringDelay && factoryCalls == 1 && publications == 1);
 	});
 
-	TEST_CASE(L"Stopping a pending desktop completion cancels it without publishing speech or errors")
+	TEST_CASE(L"Stopping a pending desktop completion cancels it without publishing or persisting speech or errors")
 	{
-		RuntimeWorkerFixture fixture;
-		EventObject requestStarted;
-		TEST_ASSERT(requestStarted.CreateAutoUnsignal(false));
-		vint publications = 0;
-		bool sawCancellation = false;
-		DesktopAgentRunner runner([&]()
+		for (bool afterSpeech : { false, true })
 		{
-			return fixture.Create([&](const WString& body)
+			RuntimeWorkerFixture fixture;
+			EventObject requestStarted;
+			TEST_ASSERT(requestStarted.CreateAutoUnsignal(false));
+			vint publications = 0;
+			vint persisted = 0;
+			bool sawCancellation = false;
+			DesktopAgentRunner runner([&]()
 			{
-				fixture.requests.Add(body);
-				requestStarted.Signal();
-				sawCancellation = fixture.cancellation->Event().WaitForTime(5000);
-				if (!sawCancellation) throw Exception(L"Fixture cancellation timed out.");
-				return fixture.observation; // Even a completed reply must be ignored after cancellation.
-			});
-		}, fixture.cancellation, [&](const WString&) { publications++; });
-		TEST_ASSERT(runner.Start());
-		auto requestPending = requestStarted.WaitForTime(5000);
-		runner.RequestRound();
-		runner.StopAndWait();
-		TEST_ASSERT(requestPending && sawCancellation && publications == 0);
-		TEST_ASSERT(fixture.captures == 1 && fixture.requests.Count() == 1 && runner.WaitForTime(0));
+				return fixture.Create([&](const WString& body)
+				{
+					if (afterSpeech && fixture.requests.Count() < 3) return fixture.Complete(body);
+					fixture.requests.Add(body);
+					requestStarted.Signal();
+					sawCancellation = fixture.cancellation->Event().WaitForTime(5000);
+					if (!sawCancellation) throw Exception(L"Fixture cancellation timed out.");
+					return afterSpeech ? fixture.terminal : fixture.observation; // Even a completed reply must be ignored after cancellation.
+				});
+			}, fixture.cancellation, [&](const WString&) { publications++; }, [&](const WString&) { persisted++; });
+			TEST_ASSERT(runner.Start());
+			auto requestPending = requestStarted.WaitForTime(5000);
+			runner.RequestRound();
+			runner.StopAndWait();
+			TEST_ASSERT(requestPending && sawCancellation && publications == 0 && persisted == 0);
+			TEST_ASSERT(fixture.captures == 1 && fixture.requests.Count() == (afterSpeech ? 4 : 1) && runner.WaitForTime(0));
+		}
 	});
 
 	TEST_CASE(L"Round cancellation prevents capture and later tool or feedback side effects")
@@ -441,6 +561,7 @@ TEST_FILE
 		EventObject published;
 		TEST_ASSERT(published.CreateAutoUnsignal(false));
 		List<WString> results;
+		List<WString> persisted;
 		vint factoryCalls = 0;
 		DesktopAgentRunner runner([&]()
 		{
@@ -457,6 +578,9 @@ TEST_FILE
 		{
 			results.Add(result);
 			published.Signal();
+		}, [&](const WString& speech)
+		{
+			persisted.Add(speech);
 		});
 		TEST_ASSERT(runner.Start());
 		auto reportedFailure = published.WaitForTime(5000);
@@ -465,6 +589,7 @@ TEST_FILE
 		auto recovered = published.WaitForTime(5000);
 		runner.StopAndWait();
 		TEST_ASSERT(reportedFailure && repairedFile && recovered);
+		TEST_ASSERT(persisted.Count() == 1 && persisted[0] == results[1]);
 		TEST_ASSERT(factoryCalls == 1 && fixture.captures == 2 && fixture.requests.Count() == 7);
 		TEST_ASSERT(results.Count() == 2 && results[0] == L"调用大模型发生错误：Missing or empty prompt: " + characterFile.GetFullPath());
 		TEST_ASSERT(results[1] == L"第一轮回应");
@@ -624,29 +749,35 @@ data: [DONE]
 			TEST_ASSERT(invalid.RunRound().Length() == 0 && corrections == 3 && !File(folder.root / L"custom-state" / L"should-not-exist.md").Exists()); // Malformed envelope must get feedback without executing tools, then accept correction.
 		}
 
-		vint argumentRequests = 0;
-		auto badArguments = [&](const WString& body)
+		for (bool testFairy : { false, true })
 		{
-			auto request = ParseJson(body, parser);
-			if (GetString(request, L"model") == config.fairyModel) return terminal;
-			auto messages = GetField(request, L"messages").Cast<json::JsonArray>();
-			if (argumentRequests++ == 0)
-				return WString(LR"({"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","tool_calls":[{"id":"bad-json","type":"function","function":{"name":"speak","arguments":"{bad"}},{"id":"unknown","type":"function","function":{"name":"unknown_tool","arguments":"{}"}}]}}]})");
-			if (argumentRequests == 2)
+			vint argumentRequests = 0;
+			auto badArguments = [&](const WString& body)
 			{
-				TEST_ASSERT(messages->items.Count() == 5); // Every failed call needs feedback.
-				for (vint i = 3; i < 5; i++)
+				auto request = ParseJson(body, parser);
+				auto messages = GetField(request, L"messages").Cast<json::JsonArray>();
+				if (GetString(request, L"model") != (testFairy ? config.fairyModel : config.visionModel))
+					return testFairy && messages->items.Count() == 2 ? observation : terminal;
+				TEST_ASSERT(GetString(request, L"tool_choice") == (argumentRequests < 2 ? L"required" : L"auto")); // Invalid speak arguments and successful non-speech tools do not submit speech.
+				if (argumentRequests++ == 0)
+					return WString(LR"({"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","tool_calls":[{"id":"bad-json","type":"function","function":{"name":"speak","arguments":"{bad"}},{"id":"unknown","type":"function","function":{"name":"unknown_tool","arguments":"{}"}},{"id":"list","type":"function","function":{"name":"file_list","arguments":"{}"}}]}}]})");
+				if (argumentRequests == 2)
 				{
-					auto feedback = GetString(messages->items[i], L"content");
-					TEST_ASSERT(GetString(messages->items[i], L"role") == L"tool" && feedback.Length() < 100); // Tool errors must be compact tool messages.
-					TEST_ASSERT(GetField(ParseJson(feedback, parser), L"ok").Cast<json::JsonLiteral>()->value == json::JsonLiteralValue::False); // Argument parse and dispatch errors must be returned.
+					TEST_ASSERT(messages->items.Count() == 6); // Every call needs feedback.
+					for (vint i = 3; i < 5; i++)
+					{
+						auto feedback = GetString(messages->items[i], L"content");
+						TEST_ASSERT(GetString(messages->items[i], L"role") == L"tool" && feedback.Length() < 100); // Tool errors must be compact tool messages.
+						TEST_ASSERT(GetField(ParseJson(feedback, parser), L"ok").Cast<json::JsonLiteral>()->value == json::JsonLiteralValue::False); // Argument parse and dispatch errors must be returned.
+					}
+					TEST_ASSERT(GetField(ParseJson(GetString(messages->items[5], L"content"), parser), L"ok").Cast<json::JsonLiteral>()->value == json::JsonLiteralValue::True);
+					return observation;
 				}
-				return observation;
-			}
-			return terminal;
-		};
-		FairyApplication arguments(folder.root / L"custom-state", config, prompts, badArguments, capture, web);
-		TEST_ASSERT(arguments.RunRound().Length() == 0 && argumentRequests == 3); // Continue after tool argument correction.
+				return terminal;
+			};
+			FairyApplication arguments(folder.root / L"custom-state", config, prompts, badArguments, capture, web);
+			TEST_ASSERT(arguments.RunRound() == (testFairy ? L"用户正在阅读 C++ 代码。" : L"") && argumentRequests == 3); // Continue after either agent corrects its tool arguments.
+		}
 
 		vint loopRequests = 0;
 		auto looping = [&](const WString&)
@@ -710,6 +841,7 @@ data: [DONE]
 			auto request = ParseJson(body, parser);
 			auto messages = GetField(request, L"messages").Cast<json::JsonArray>();
 			TEST_ASSERT(GetString(request, L"model") == (step < 3 ? config.visionModel : config.fairyModel)); // Keep each agent's repeated speech on its configured model.
+			TEST_ASSERT(GetString(request, L"tool_choice") == (step == 0 || step == 3 ? L"required" : L"auto")); // Reset speech submission each round, and allow completion after nonempty or empty fairy speak.
 			auto system = step < 3 ? L"工具说明\n\n记忆指引\n\n视觉请求" : L"工具说明\n\n记忆指引\n\n精灵请求\n\n固定性格";
 			TEST_ASSERT(GetString(messages->items[0], L"role") == L"system" && GetString(messages->items[0], L"content") == system); // Preserve prompt order and keep the observation timestamp out of system prompts.
 			TEST_ASSERT(clock.localTimeCalls == round + (step < 3 ? 0 : 1)); // Sample local time once after vision finishes, never again for tool feedback.

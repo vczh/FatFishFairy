@@ -100,6 +100,7 @@ The directory contains `FatFishFairy.exe`, `FatFishCli.exe`, and `UnitTest.exe`.
 - Displays a 384×384 transparent, frameless character window that stays on top.
 - Shows a system balloon saying “Hello, world!” above the window at startup, then automatically captures all monitors, runs the vision model followed by the fairy model, replaces the bubble text with the fairy's speech, and immediately starts the next round.
 - The bubble's pointer faces down toward the window's top center and follows the window; its placement adjusts near screen edges to keep it visible. The latest speech stays visible until the next update. When the fairy chooses to remain silent, the bubble clears and hides until there is new text.
+- Each round's complete nonempty speech is appended to `env/history.md`, creating it when needed. Each entry begins with `# Speak YYYY-MM-DD HH-mm-ss`, followed by a blank line and the speech, using local time and UTF-8 encoding. Appending continues after a restart. Git ignores this file; startup greetings, silent results, and errors are excluded. Write failures appear in the bubble and trigger a retry. This log is specific to FatFishFairy.
 - Model configuration or request failures appear in the bubble with the prefix “调用大模型发生错误：” (An error occurred while calling the model), followed by an automatic retry after one second. Correcting missing or invalid model configuration allows initialization to retry.
 - Hold the left mouse button on the character to drag it. Releasing the button saves its position, which is restored on the next launch.
 - Right-click to open the menu, switch character themes in the “主题” (Theme) submenu, or select “退出” (Exit) to close the application. Themes appear by their Chinese display names in `themes/theme.json` order, with a check beside the current theme.
@@ -183,7 +184,7 @@ Push-Location FatFish
 Pop-Location
 ```
 
-Tests use synthetic model responses and temporary directories without reading real credentials, capturing the screen, or accessing the network. They cover memory file safety, configuration, streaming responses, output formatting, error feedback, multiple model rounds, window position, theme order, theme selection and fallback, settings persistence, and animation sequencing. The complete suite should pass, with no memory leaks in Debug builds.
+Tests use synthetic model responses and temporary directories without reading real credentials, capturing the screen, or accessing the network. They cover memory file safety, configuration, streaming responses, output formatting, error feedback, multiple model rounds, window position, theme order, theme selection and fallback, settings persistence, animation sequencing, and speech history appending, timestamps, and write failures. The complete suite should pass, with no memory leaks in Debug builds.
 
 ### Local integration tests
 
