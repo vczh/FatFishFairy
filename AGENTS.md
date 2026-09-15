@@ -198,6 +198,7 @@ CONTENT
 - Verification must include 10 consecutive successful `ENTER` rounds in `FatFishCli`, using the configured real models in one running process.
 - Each round must finish the vision agent followed by the fairy agent successfully. After all 10 rounds, press `ESC` and verify a clean exit.
 - If any round fails, fix the problem and restart the 10-round verification before reporting completion.
+- `FatFishFairy` verification must also run the desktop app with the configured real models in one process and display at least two nonempty fairy speech results in its actual talking bubble within the first two minutes after startup. Inspect each visible bubble update on screen; parsed `speak` calls, logs and loopback fixtures do not satisfy this requirement. Confirm a clean exit after verification. If the two-minute requirement fails, fix the problem and restart this desktop verification before reporting completion.
 
 ## FatFishFairy
 
