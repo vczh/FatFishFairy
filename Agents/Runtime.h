@@ -52,9 +52,11 @@ namespace fatfish
 		// Join each agent's nonempty speak texts in order with newlines, across all tool replies.
 		// Forward the complete vision result to the fairy and return the complete fairy result.
 		vl::WString                                     RunRound();
+		// Call between rounds on the owning thread. Saved memories remain available.
+		void                                            ResetFairySession();
 	};
 
-	// Own one application/session on a worker. The UI requests the next round only
+	// Own one application on a worker. The UI requests the next round only
 	// after displaying the previous result. StopAndWait cancels I/O and joins it.
 	class DesktopAgentRunner : public vl::Thread
 	{
@@ -67,6 +69,8 @@ namespace fatfish
 		vl::SpinLock                                   lockCharacter;
 		vl::filesystem::FilePath                        characterFile;
 		vl::filesystem::FilePath                        fallbackCharacterFile;
+		bool                                            resetFairySession = false; // Protected by lockCharacter.
+		vl::filesystem::FilePath                        activeCharacterFile; // Worker-owned selection for this round.
 
 		vl::WString                                     ReadCharacterPrompt();
 
@@ -82,7 +86,8 @@ namespace fatfish
 		                                                    vl::Ptr<CancellationToken> cancellationToken, vl::Func<void(const vl::WString&)> publishResult,
 		                                                    vl::Func<void(const vl::WString&)> saveSpeech = {});
 		                                                ~DesktopAgentRunner();
-		// Update selection without interrupting the current round or resetting fairy history.
+		// Finish the current round, then use this character with a fresh fairy session.
+		// Selecting the same file does not reset; saved memories are retained.
 		void                                            SetCharacterFile(const vl::filesystem::FilePath& selectedFile);
 		void                                            RequestRound();
 		void                                            StopAndWait();

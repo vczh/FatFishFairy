@@ -105,7 +105,7 @@ The directory contains `FatFishFairy.exe`, `FatFishCli.exe`, and `UnitTest.exe`.
 - Hold the left mouse button on the character to drag it. Releasing the button saves its position, which is restored on the next launch.
 - Right-click to open the menu, switch character themes in the “主题” (Theme) submenu, or select “退出” (Exit) to close the application. Themes appear by their Chinese display names in `themes/theme.json` order, with a check beside the current theme.
 - Switching themes immediately picks an animation from the new theme and starts at its first frame, then saves the choice for the next launch. If no theme has been saved or the saved theme no longer exists, the first theme in the list is used.
-- The fairy's personality comes from `themes/<current-theme>/Character.md`, falling back to `themes/loli_maid/Character.md` when that file is absent. The current theme's personality is read before each fairy request. Switching themes preserves the conversation and memories; a request already in progress may still speak with the previous personality.
+- The fairy's personality comes from `themes/<current-theme>/Character.md`, falling back to `themes/loli_maid/Character.md` when that file is absent. Switching to another theme discards the previous fairy conversation and starts a fresh session with the new theme on the next round, preserving memories in `memory` and the speech log. A round already in progress keeps the theme it started with and may still speak with the previous personality when it finishes. Selecting the current theme again does not reset the session.
 - Picks an animation at random from the current theme and plays its complete sequence three times at one frame per second before randomly choosing the next animation.
 
 Two included themes provide 20 animations with 70 frames in total. Switch between them through the right-click menu:
@@ -129,7 +129,7 @@ The window position and selected theme are saved in `env/config.json`, which nor
 
 A missing file or coordinate defaults the coordinate to zero. Negative coordinates on other monitors are supported. `selectedTheme` uses a theme folder key from `themes/theme.json` and must be a string; if it is missing or no key matches exactly, the first theme is used. Dragging and theme switching create or update the file while preserving each other's settings and other fields; Git ignores this file. Invalid configuration, invalid coordinates, an invalid theme selection type, or missing or invalid theme images cause an error.
 
-The desktop application continuously captures the screen and contacts the configured model service. Screenshots are processed in memory and sent to the vision model; the fairy model receives the complete observation text and the local date and time when that observation finishes. The vision model starts a new session each round, while the fairy model retains its conversation within the process and can maintain files in `memory`. Dragging, theme switching, and exit remain available during model requests; exiting cancels pending requests and stops the loop.
+The desktop application continuously captures the screen and contacts the configured model service. Screenshots are processed in memory and sent to the vision model; the fairy model receives the complete observation text and the local date and time when that observation finishes. The vision model starts a new session each round, while the fairy model retains its conversation across consecutive rounds with the same theme and can maintain files in `memory`. Dragging, theme switching, and exit remain available during model requests; exiting cancels pending requests and stops the loop.
 
 ## Use FatFishCli
 
@@ -184,7 +184,7 @@ Push-Location FatFish
 Pop-Location
 ```
 
-Tests use synthetic model responses and temporary directories without reading real credentials, capturing the screen, or accessing the network. They cover memory file safety, configuration, streaming responses, output formatting, error feedback, multiple model rounds, window position, theme order, theme selection and fallback, settings persistence, animation sequencing, and speech history appending, timestamps, and write failures. The complete suite should pass, with no memory leaks in Debug builds.
+Tests use synthetic model responses and temporary directories without reading real credentials, capturing the screen, or accessing the network. They cover memory file safety, configuration, streaming responses, output formatting, error feedback, multiple model rounds, window position, theme order, theme selection and fallback, fresh fairy sessions after theme switching with memories retained, settings persistence, animation sequencing, and speech history appending, timestamps, and write failures. The complete suite should pass, with no memory leaks in Debug builds.
 
 ### Local integration tests
 
@@ -198,7 +198,7 @@ After building the corresponding applications, run these in PowerShell 7:
 & ./FatFish/UnitTest/Invoke-Fairy.ps1 -Configuration Debug -Platform x64
 ```
 
-Both integration tests send monitor screenshots only to a local loopback test server. They do not save those screenshots or access a real model service. The desktop integration test uses temporary application, theme, configuration, and memory directories to check transparency, topmost behavior, animation, balloon tracking, dragging and position restore, theme menu order, saved switching, startup restoration, and fallback for unknown theme keys. It also checks continuous model calls, updated and silent speech, error display and recovery, and menu exit while a request is pending. Tests do not read real configuration or credentials. Add `-ScreenshotPath PATH` to save test window, menu, and bubble screenshots for visual checks of the Chinese theme names, selection mark, and complete speech. The actual on-screen capture of long speech ends in `.speech-desktop.png`. The test moves the mouse and restores the pointer afterward.
+Both integration tests send monitor screenshots only to a local loopback test server. They do not save those screenshots or access a real model service. The desktop integration test uses temporary application, theme, configuration, and memory directories to check transparency, topmost behavior, animation, balloon tracking, dragging and position restore, theme menu order, saved switching, startup restoration, and fallback for unknown theme keys. When switching themes, it verifies that the current round keeps its original personality and the next round starts with an empty fairy conversation. It also checks continuous model calls, updated and silent speech, error display and recovery, and menu exit while a request is pending. Tests do not read real configuration or credentials. Add `-ScreenshotPath PATH` to save test window, menu, and bubble screenshots for visual checks of the Chinese theme names, selection mark, and complete speech. The actual on-screen capture of long speech ends in `.speech-desktop.png`. The test moves the mouse and restores the pointer afterward.
 
 ### Real-model verification
 

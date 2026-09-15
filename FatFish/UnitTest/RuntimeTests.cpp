@@ -260,6 +260,152 @@ TEST_FILE
 		TEST_ASSERT(wcsstr(GetString(secondFairy->items[5], L"content").Buffer(), L"合成屏幕观察"));
 	});
 
+	TEST_CASE(L"Resetting the fairy session discards conversation history while retaining memory files and tools")
+	{
+		RuntimeWorkerFixture fixture;
+		List<vint> initialFairyMessageCounts;
+		bool readPreservedMemory = false;
+		auto application = fixture.Create([&](const WString& body)
+		{
+			auto response = fixture.Complete(body);
+			json::Parser parser;
+			auto request = ParseJson(body, parser);
+			if (GetString(request, L"model") != fixture.config.fairyModel) return response;
+			auto messages = GetField(request, L"messages").Cast<json::JsonArray>();
+			if (GetString(messages->items[messages->items.Count() - 1], L"role") == L"user")
+			{
+				initialFairyMessageCounts.Add(messages->items.Count());
+				if (fixture.captures == 1)
+					return WString(LR"({"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","tool_calls":[{"id":"remember","type":"function","function":{"name":"file_write","arguments":"{\"path\":\"remembered.md\",\"content\":\"主人喜欢 C++\\n第二行\"}"}},{"id":"say","type":"function","function":{"name":"speak","arguments":"{\"text\":\"写下记忆\"}"}}]}}]})");
+				if (fixture.captures == 3)
+					return WString(LR"({"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","tool_calls":[{"id":"recall","type":"function","function":{"name":"file_read","arguments":"{\"path\":\"remembered.md\"}"}},{"id":"say","type":"function","function":{"name":"speak","arguments":"{\"text\":\"读到记忆\"}"}}]}}]})");
+			}
+			else if (fixture.captures == 3)
+			{
+				TEST_ASSERT(messages->items.Count() == 5 && GetString(messages->items[3], L"tool_call_id") == L"recall");
+				auto feedback = ParseJson(GetString(messages->items[3], L"content"), parser);
+				TEST_ASSERT(GetString(feedback, L"content") == L"主人喜欢 C++\n第二行");
+				readPreservedMemory = true;
+			}
+			return response;
+		});
+		TEST_ASSERT(application->RunRound() == L"写下记忆");
+		TEST_ASSERT(application->RunRound() == L"");
+		auto memoryFile = fixture.folder.root / L"state" / L"remembered.md";
+		auto memoryBeforeReset = ReadRuntimeFixtureBytes(memoryFile);
+		application->ResetFairySession();
+		TEST_ASSERT(ReadRuntimeFixtureBytes(memoryFile) == memoryBeforeReset);
+		TEST_ASSERT(application->RunRound() == L"读到记忆");
+		TEST_ASSERT(readPreservedMemory && ReadRuntimeFixtureBytes(memoryFile) == memoryBeforeReset);
+		TEST_ASSERT(fixture.captures == 3 && fixture.requests.Count() == 12);
+		TEST_ASSERT(initialFairyMessageCounts.Count() == 3);
+		TEST_ASSERT(initialFairyMessageCounts[0] == 2 && initialFairyMessageCounts[1] == 7 && initialFairyMessageCounts[2] == 2);
+	});
+
+	TEST_CASE(L"Desktop theme switches reset history between rounds and retain a reset after switching back")
+	{
+		RuntimeWorkerFixture fixture;
+		EventObject published;
+		TEST_ASSERT(published.CreateAutoUnsignal(false));
+		List<WString> results;
+		vint factoryCalls = 0;
+		DesktopAgentRunner runner([&]()
+		{
+			factoryCalls++;
+			return fixture.Create();
+		}, fixture.cancellation, [&](const WString& result)
+		{
+			results.Add(result);
+			published.Signal();
+		});
+		auto firstCharacter = fixture.folder.root / L"theme-a" / L"Character.md";
+		auto secondCharacter = fixture.folder.root / L"theme-b" / L"Character.md";
+		runner.SetCharacterFile(firstCharacter);
+		TEST_ASSERT(runner.Start());
+		auto firstCompleted = published.WaitForTime(5000);
+		runner.SetCharacterFile(firstCharacter); // Selecting the same theme keeps its conversation.
+		runner.RequestRound();
+		auto sameSelectionCompleted = published.WaitForTime(5000);
+		runner.SetCharacterFile(secondCharacter);
+		runner.SetCharacterFile(firstCharacter); // A -> B -> A still discards A's previous conversation.
+		runner.RequestRound();
+		auto switchedBackCompleted = published.WaitForTime(5000);
+		runner.SetCharacterFile(secondCharacter);
+		runner.RequestRound();
+		auto newSelectionCompleted = published.WaitForTime(5000);
+		runner.RequestRound();
+		auto retainedNewSession = published.WaitForTime(5000);
+		runner.StopAndWait();
+		TEST_ASSERT(firstCompleted && sameSelectionCompleted && switchedBackCompleted && newSelectionCompleted && retainedNewSession);
+		TEST_ASSERT(factoryCalls == 1 && fixture.captures == 5 && fixture.requests.Count() == 20);
+		TEST_ASSERT(results.Count() == 5);
+		TEST_ASSERT(results[0] == L"第一轮回应" && results[1] == L"" && results[2] == L"第一轮回应" && results[3] == L"第一轮回应" && results[4] == L"");
+		json::Parser parser;
+		vint expectedInitialCounts[] = { 2, 6, 2, 2, 6 };
+		for (vint round = 0; round < 5; round++)
+		{
+			auto request = ParseJson(fixture.requests[round * 4 + 2], parser);
+			TEST_ASSERT(GetString(request, L"model") == fixture.config.fairyModel);
+			TEST_ASSERT(GetField(request, L"messages").Cast<json::JsonArray>()->items.Count() == expectedInitialCounts[round]);
+		}
+	});
+
+	TEST_CASE(L"A theme switch during a pending fairy response preserves that round and resets the next round")
+	{
+		for (vint pendingRequest : { 7, 8 }) // The initial fairy reply and its tool-feedback follow-up.
+		{
+			RuntimeWorkerFixture fixture;
+			EventObject published;
+			EventObject requestStarted;
+			EventObject releaseRequest;
+			TEST_ASSERT(published.CreateAutoUnsignal(false) && requestStarted.CreateAutoUnsignal(false) && releaseRequest.CreateAutoUnsignal(false));
+			List<WString> results;
+			bool pendingWasReleased = false;
+			bool pendingWasCancelled = false;
+			DesktopAgentRunner runner([&]()
+			{
+				return fixture.Create([&](const WString& body)
+				{
+					auto response = fixture.Complete(body);
+					if (fixture.requests.Count() == pendingRequest)
+					{
+						requestStarted.Signal();
+						pendingWasReleased = releaseRequest.WaitForTime(5000);
+						pendingWasCancelled = fixture.cancellation->IsCancelled();
+						if (!pendingWasReleased) throw Exception(L"Fixture theme switch timed out.");
+					}
+					return response;
+				});
+			}, fixture.cancellation, [&](const WString& result)
+			{
+				results.Add(result);
+				published.Signal();
+			});
+			runner.SetCharacterFile(fixture.folder.root / L"theme-a" / L"Character.md");
+			TEST_ASSERT(runner.Start());
+			auto firstCompleted = published.WaitForTime(5000);
+			runner.RequestRound();
+			auto responsePending = requestStarted.WaitForTime(5000);
+			runner.SetCharacterFile(fixture.folder.root / L"theme-b" / L"Character.md");
+			releaseRequest.Signal();
+			auto pendingRoundCompleted = published.WaitForTime(5000);
+			runner.RequestRound();
+			auto newSessionCompleted = published.WaitForTime(5000);
+			runner.StopAndWait();
+			TEST_ASSERT(firstCompleted && responsePending && pendingRoundCompleted && newSessionCompleted);
+			TEST_ASSERT(pendingWasReleased && !pendingWasCancelled);
+			TEST_ASSERT(fixture.captures == 3 && fixture.requests.Count() == 12);
+			TEST_ASSERT(results.Count() == 3 && results[0] == L"第一轮回应" && results[1] == L"" && results[2] == L"第一轮回应");
+			json::Parser parser;
+			vint expectedCounts[] = { 2, 4, 2, 4, 2, 4, 6, 8, 2, 4, 2, 4 };
+			for (vint i = 0; i < fixture.requests.Count(); i++)
+			{
+				auto request = ParseJson(fixture.requests[i], parser);
+				TEST_ASSERT(GetField(request, L"messages").Cast<json::JsonArray>()->items.Count() == expectedCounts[i]);
+			}
+		}
+	});
+
 	TEST_CASE(L"Desktop worker reports initialization failure and recovers after a delayed requested retry")
 	{
 		RuntimeWorkerFixture fixture;

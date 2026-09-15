@@ -209,7 +209,7 @@ namespace fatfish
 			WString character;
 			if (!vision)
 			{
-				// Read the current selection for every fairy submission, including tool feedback.
+				// Read the character for every fairy submission, including tool feedback.
 				character = characterProvider ? characterProvider() : prompts.character;
 				if (character.Length() == 0) throw Exception(L"The character prompt is empty.");
 			}
@@ -323,6 +323,11 @@ namespace fatfish
 		}
 	}
 
+	void FairyApplication::ResetFairySession()
+	{
+		fairyHistory = Ptr(new json::JsonArray);
+	}
+
 	DesktopAgentRunner::DesktopAgentRunner(const FilePath& envFolder, const FilePath& memoryFolder,
 		const FilePath& initialCharacterFile, const FilePath& fallbackFile, Func<void(const WString&)> publishResult)
 		: DesktopAgentRunner({}, Ptr(new CancellationToken), publishResult,
@@ -338,20 +343,20 @@ namespace fatfish
 
 	WString DesktopAgentRunner::ReadCharacterPrompt()
 	{
-		FilePath selectedFile;
-		SPIN_LOCK(lockCharacter)
-		{
-			selectedFile = characterFile;
-		}
-		// File I/O stays outside the selection lock so the UI can continue switching themes.
-		return LoadCharacterPrompt(selectedFile, fallbackCharacterFile);
+		// Reread the current round's file so prompt edits apply to tool feedback too.
+		// Theme changes take effect together with a fresh conversation next round.
+		return LoadCharacterPrompt(activeCharacterFile, fallbackCharacterFile);
 	}
 
 	void DesktopAgentRunner::SetCharacterFile(const FilePath& selectedFile)
 	{
 		SPIN_LOCK(lockCharacter)
 		{
-			characterFile = selectedFile;
+			if (characterFile != selectedFile)
+			{
+				characterFile = selectedFile;
+				resetFairySession = true;
+			}
 		}
 	}
 
@@ -377,7 +382,15 @@ namespace fatfish
 			try
 			{
 				cancellation->ThrowIfCancelled();
+				bool resetSession;
+				SPIN_LOCK(lockCharacter)
+				{
+					activeCharacterFile = characterFile;
+					resetSession = resetFairySession;
+					resetFairySession = false;
+				}
 				if (!application) application = createApplication();
+				if (resetSession) application->ResetFairySession();
 				result = application->RunRound();
 				cancellation->ThrowIfCancelled();
 				if (result.Length() > 0 && persistSpeech) persistSpeech(result);

@@ -539,7 +539,7 @@ try {
     secondCharacter = '# 中文桌面角色 theme_a'
   }
   $completeSpeech = $speechData.longSpeech + "`n" + $speechData.secondSpeech + "`n" + $speechData.followUpSpeech
-  Start-FixtureServer
+  Start-FixtureServer '# 中文桌面角色 theme_z'
   # Deliberately use keys in nonalphabetical order and distinct Chinese display
   # names. Menu-row selection verifies order; optional screenshots show the labels.
   $themeKeys = @('theme_z', 'theme_a', 'theme_m')
@@ -632,15 +632,16 @@ try {
   # making speech replacement and automatic restart deterministic to inspect.
   Complete-ModelRequests 1 2
   Assert-SpeechHistory $history
-  # Change selection while a fairy request is pending. Its next tool-feedback
-  # submission must use the new character without restarting this round.
+  # Change selection while a fairy request is pending. All its tool-feedback
+  # submissions must keep the character captured at the start of this round.
   Select-Theme $positioned 2
   Complete-ModelRequests 3 3
   Select-Theme $positioned 1
   Complete-ModelRequests 4 4
   Assert-SpeechHistory $history
   # Switch during the last fairy follow-up so the following round must use the
-  # missing-character fallback without resetting the conversation.
+  # missing-character fallback with a new fairy conversation. The fixture
+  # rejects any user, assistant or tool history left over from this round.
   Select-Theme $positioned 2
   $speechStarted = [datetime]::Now
   Complete-ModelRequests 5 5
@@ -680,7 +681,7 @@ try {
   Close-ThroughMenu $positioned
   Assert-SpeechHistory $history
   Assert-FixtureServer
-  Write-Output 'Native greeting shape/movement, responsive UI during a pending request, complete multiline speech, empty speech, error recovery, theme character switching and fallback with persistent fairy history, and exit during a pending request passed.'
+  Write-Output 'Native greeting shape/movement, responsive UI during a pending request, complete multiline speech, empty speech, error recovery, fixed character within pending rounds, fresh fairy conversations after theme switching with fallback, and exit during a pending request passed.'
 
   $application.Dispose()
   Start-FixtureServer
