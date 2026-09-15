@@ -37,14 +37,50 @@ class FairyDesktopWindow : public fatfish::ui::FairyWindow, public INativeContro
 {
 private:
 	FilePath                                envFolder;
+	const List<Ptr<DesktopTheme>>&           themes;
+	vint                                    selectedTheme;
 	ThemePlayback                           playback;
 	Dictionary<WString, Ptr<INativeImage>>   images;
+	List<GuiToolstripButton*>                themeItems;
 	Nullable<Point>                         dragStart;
 	vuint64_t                               lastFrameTime = 0;
 	HWND                                    speechBubble = nullptr;
 	TOOLINFOW                               speechTool = {};
 	Nullable<NativePoint>                   speechLayoutTarget;
 	vint                                    speechStemX = 0;
+
+	void LoadThemeImages(Ptr<DesktopTheme> theme)
+	{
+		images.Clear();
+		for (auto animation : theme->animations)
+		{
+			for (auto&& path : animation->frames)
+			{
+				auto image = GetCurrentController()->ImageService()->CreateImageFromFile(path.GetFullPath());
+				if (!image || image->GetFrameCount() != 1 || image->GetFrame(0)->GetSize() != Size(384, 384))
+				{
+					throw Exception(L"Theme frame must be a 384x384 image: " + path.GetFullPath());
+				}
+				images.Add(path.GetFullPath(), image);
+			}
+		}
+	}
+
+	void SelectTheme(vint index)
+	{
+		if (index == selectedTheme) return;
+		LoadThemeImages(themes[index]);
+		SaveSelectedDesktopTheme(envFolder, themes[index]->name);
+		playback.SetTheme(themes[index]);
+		selectedTheme = index;
+		fairyImage->SetImage(images[playback.CurrentFrame().GetFullPath()], 0);
+		lastFrameTime = GetTickCount64();
+		for (vint i = 0; i < themeItems.Count(); i++)
+		{
+			themeItems[i]->SetSelected(i == selectedTheme);
+			themeItems[i]->SetShortcutText(i == selectedTheme ? L"✓" : L"");
+		}
+	}
 
 	void UpdateSpeechPosition()
 	{
@@ -165,23 +201,31 @@ public:
 		}
 	}
 
-	FairyDesktopWindow(const FilePath& environment, Ptr<DesktopTheme> theme, vuint64_t seed)
+	// GuiMain owns the catalog for the entire lifetime of this window.
+	FairyDesktopWindow(const FilePath& environment, const List<Ptr<DesktopTheme>>& desktopThemes, vuint64_t seed)
 		: envFolder(environment)
-		, playback(theme, seed)
+		, themes(desktopThemes)
+		, selectedTheme(LoadSelectedDesktopTheme(envFolder, themes))
+		, playback(themes[selectedTheme], seed)
 	{
-		for (auto animation : theme->animations)
-		{
-			for (auto&& path : animation->frames)
-			{
-				auto image = GetCurrentController()->ImageService()->CreateImageFromFile(path.GetFullPath());
-				if (!image || image->GetFrameCount() != 1 || image->GetFrame(0)->GetSize() != Size(384, 384))
-				{
-					throw Exception(L"Theme frame must be a 384x384 image: " + path.GetFullPath());
-				}
-				images.Add(path.GetFullPath(), image);
-			}
-		}
+		LoadThemeImages(themes[selectedTheme]);
 		fairyImage->SetImage(images[playback.CurrentFrame().GetFullPath()], 0);
+		auto menu = themeMenuItem->EnsureToolstripSubMenu();
+		for (vint i = 0; i < themes.Count(); i++)
+		{
+			auto item = new GuiToolstripButton(theme::ThemeName::MenuItemButton);
+			item->SetText(themes[i]->displayName);
+			item->SetAutoSelection(false);
+			item->SetSelected(i == selectedTheme);
+			// DarkSkin has no selected menu glyph; use its trailing text slot.
+			item->SetShortcutText(i == selectedTheme ? L"✓" : L"");
+			item->Clicked.AttachLambda([this, i](GuiGraphicsComposition* sender, GuiEventArgs& arguments)
+			{
+				SelectTheme(i);
+			});
+			menu->GetToolstripItems().Add(item);
+			themeItems.Add(item);
+		}
 		SetTopMost(true);
 		SetShowInTaskBar(false);
 		ForceCalculateSizeImmediately();
@@ -230,7 +274,7 @@ void GuiMain()
 	LoadDesktopThemes(themesFolder, themes);
 	std::random_device entropy;
 	auto seed = (static_cast<vuint64_t>(entropy()) << 32) | entropy();
-	FairyDesktopWindow window(envFolder, themes[0], seed);
+	FairyDesktopWindow window(envFolder, themes, seed);
 	GetApplication()->Run(&window);
 }
 

@@ -59,6 +59,8 @@ namespace vl
 				ATTRIBUTE_MEMBER(::vl::__vwsn::att_cpp_Protected)
 				CLASS_MEMBER_FIELD(self)
 				ATTRIBUTE_MEMBER(::vl::__vwsn::att_cpp_Protected)
+				CLASS_MEMBER_FIELD(themeMenuItem)
+				ATTRIBUTE_MEMBER(::vl::__vwsn::att_cpp_Protected)
 			END_CLASS_MEMBER(::fatfish::ui::FairyWindowConstructor)
 
 			BEGIN_CLASS_MEMBER(::fatfish::ui::FairyWindowTemplate)

@@ -4,7 +4,7 @@
 
 A desktop fairy for Windows, with two applications:
 
-- **FatFishFairy**: displays an always-on-top transparent character window, plays animations, and supports dragging with position persistence. Model integration is not yet available, so no API key is required.
+- **FatFishFairy**: displays an always-on-top transparent character window, plays animations, and supports theme switching and dragging while remembering the selected theme and position. Model integration is not yet available, so no API key is required.
 - **FatFishCli**: observes the screen on a keypress. A vision model describes screenshots from all monitors, then a fairy model uses that description to maintain memories and respond in the terminal.
 
 ## Preparation
@@ -100,21 +100,23 @@ The directory contains `FatFishFairy.exe`, `FatFishCli.exe`, and `UnitTest.exe`.
 - Displays a 384×384 transparent, frameless character window that stays on top.
 - Shows a system balloon saying “Hello, world!” above the window at startup, with its pointer facing down toward the window's top center. It follows the window and stays visible until the application closes; its placement adjusts near screen edges to keep it visible.
 - Hold the left mouse button on the character to drag it. Releasing the button saves its position, which is restored on the next launch.
-- Right-click to open the menu and select “退出” (Exit) to close the application.
-- Uses the first theme in `themes/theme.json`, picks an animation at random, and plays its complete sequence three times at one frame per second before randomly choosing the next animation.
+- Right-click to open the menu, switch character themes in the “主题” (Theme) submenu, or select “退出” (Exit) to close the application. Themes appear by their Chinese display names in `themes/theme.json` order, with a check beside the current theme.
+- Switching themes immediately picks an animation from the new theme and starts at its first frame, then saves the choice for the next launch. If no theme has been saved or the saved theme no longer exists, the first theme in the list is used.
+- Picks an animation at random from the current theme and plays its complete sequence three times at one frame per second before randomly choosing the next animation.
 
 The included theme has 10 animations with 34 frames, featuring coffee, homework, manga, sleeping, playing, programming, drawing, and transformation.
 
-The window position is saved in `env/config.json`, which normally needs no manual setup. You can also edit it while the application is closed:
+The window position and selected theme are saved in `env/config.json`, which normally needs no manual setup. You can also edit it while the application is closed:
 
 ```json
 {
   "windowX": 0,
-  "windowY": 0
+  "windowY": 0,
+  "selectedTheme": "loli_maid"
 }
 ```
 
-A missing file or coordinate defaults to zero. Negative coordinates on other monitors are supported. Dragging creates or updates the file while preserving other fields; Git ignores this file. Invalid configuration, invalid coordinates, or missing or invalid theme images cause an error.
+A missing file or coordinate defaults the coordinate to zero. Negative coordinates on other monitors are supported. `selectedTheme` uses a theme folder key from `themes/theme.json` and must be a string; if it is missing or no key matches exactly, the first theme is used. Dragging and theme switching create or update the file while preserving each other's settings and other fields; Git ignores this file. Invalid configuration, invalid coordinates, an invalid theme selection type, or missing or invalid theme images cause an error.
 
 The desktop window currently plays animations and displays a fixed startup greeting; it does not automatically capture the screen or call models. Use the CLI below for screen observation and model responses.
 
@@ -169,7 +171,7 @@ Push-Location FatFish
 Pop-Location
 ```
 
-Tests use synthetic model responses and temporary directories without reading real credentials, capturing the screen, or accessing the network. They cover memory file safety, configuration, streaming responses, output formatting, error feedback, multiple model rounds, window position, and animation sequencing. The complete suite should pass, with no memory leaks in Debug builds.
+Tests use synthetic model responses and temporary directories without reading real credentials, capturing the screen, or accessing the network. They cover memory file safety, configuration, streaming responses, output formatting, error feedback, multiple model rounds, window position, theme order, theme selection and fallback, settings persistence, and animation sequencing. The complete suite should pass, with no memory leaks in Debug builds.
 
 ### Local integration tests
 
@@ -179,11 +181,11 @@ After building the corresponding applications, run these in PowerShell 7:
 # CLI: real screen capture, PNG encoding, local HTTP requests, and memory writes
 & ./FatFish/UnitTest/Invoke.ps1 -Configuration Debug -Platform x64
 
-# Desktop window: transparency, topmost behavior, animation, balloon tracking, dragging, position restore, and menu exit
+# Desktop window: transparency, topmost behavior, animation, balloon tracking, dragging, position restore, theme menu, switching and restore, and menu exit
 & ./FatFish/UnitTest/Invoke-Fairy.ps1 -Configuration Debug -Platform x64
 ```
 
-The CLI integration test sends screenshots only to a local loopback test server. It does not save images or access a real model service. The desktop integration test uses a temporary application, themes, and configuration without reading real configuration or credentials. It moves the mouse during the test and restores the pointer afterward.
+The CLI integration test sends screenshots only to a local loopback test server. It does not save images or access a real model service. The desktop integration test uses a temporary application, themes, and configuration to check theme menu order, saved switching, startup restoration, and fallback for unknown theme keys, without reading real configuration or credentials. Add `-ScreenshotPath PATH` to save menu screenshots for visual checks of the Chinese theme names and selection mark. The test moves the mouse and restores the pointer afterward.
 
 ### Real-model verification
 

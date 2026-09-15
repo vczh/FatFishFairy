@@ -50,6 +50,7 @@ namespace FatFishFairySmoke
         public int Colors;
         public int OpaquePixels;
         public int ClickX, ClickY;
+        public int ThemeColor, StageColor;
     }
 
     public static class Native
@@ -169,6 +170,26 @@ namespace FatFishFairySmoke
 
         public static IntPtr Location(int x, int y) { return new IntPtr((y << 16) | (x & 65535)); }
 
+        public static void CreateThemeFrame(string path, int themeColor, int stage)
+        {
+            // Synthetic frames keep the test independent of supplied artwork. Their
+            // opaque centers identify the theme and first frame without image matching.
+            using (var bitmap = new Bitmap(384, 384, PixelFormat.Format32bppArgb))
+            {
+                for (int y = 48; y < 336; y++)
+                for (int x = 64; x < 320; x++)
+                    bitmap.SetPixel(x, y, Color.FromArgb(255, (x + stage * 37) % 256, y % 256, (x + y) % 256));
+                int stageColor = stage == 1 ? 0xFFFFFF : stage == 2 ? 0x808080 : 0x202020;
+                for (int y = 112; y < 144; y++)
+                for (int x = 176; x < 208; x++)
+                    bitmap.SetPixel(x, y, Color.FromArgb(unchecked((int)0xFF000000) | stageColor));
+                for (int y = 168; y < 216; y++)
+                for (int x = 168; x < 216; x++)
+                    bitmap.SetPixel(x, y, Color.FromArgb(unchecked((int)0xFF000000) | themeColor));
+                bitmap.Save(path, ImageFormat.Png);
+            }
+        }
+
         public static Frame Capture(IntPtr handle, string path)
         {
             var window = Describe(handle);
@@ -203,7 +224,12 @@ namespace FatFishFairySmoke
                     bitmap.Save(stream, ImageFormat.Png);
                     if (!String.IsNullOrEmpty(path)) File.WriteAllBytes(path, stream.ToArray());
                     using (var hash = SHA256.Create())
-                    return new Frame { Hash = BitConverter.ToString(hash.ComputeHash(stream.ToArray())), Colors = colors.Count, OpaquePixels = opaque, ClickX = clickX, ClickY = clickY };
+                    return new Frame {
+                        Hash = BitConverter.ToString(hash.ComputeHash(stream.ToArray())), Colors = colors.Count,
+                        OpaquePixels = opaque, ClickX = clickX, ClickY = clickY,
+                        ThemeColor = bitmap.GetPixel(bitmap.Width / 2, bitmap.Height / 2).ToArgb() & 0xFFFFFF,
+                        StageColor = bitmap.GetPixel(bitmap.Width / 2, bitmap.Height / 3).ToArgb() & 0xFFFFFF
+                    };
                 }
             }
         }
@@ -285,7 +311,7 @@ function Assert-GreetingMoved($beforeMain, $beforeBalloon, $afterMain) {
   return $afterBalloon
 }
 
-function Close-ThroughMenu($mainWindow) {
+function Open-ContextMenu($mainWindow) {
   $location = [FatFishFairySmoke.Native]::Location(192, 192)
   [void][FatFishFairySmoke.Native]::SendMessage($mainWindow.Handle, 0x0204, [IntPtr]2, $location)
   [void][FatFishFairySmoke.Native]::SendMessage($mainWindow.Handle, 0x0205, [IntPtr]::Zero, $location)
@@ -295,11 +321,67 @@ function Close-ThroughMenu($mainWindow) {
     if ($popups.Count -eq 1) { $menu = $popups[0]; break }
     Start-Sleep -Milliseconds 100
   }
-  if ($null -eq $menu) { throw 'Right-click did not open the exit menu.' }
-  $menuLocation = [FatFishFairySmoke.Native]::Location([int]($menu.ClientWidth / 2), [int]($menu.ClientHeight / 2))
+  if ($null -eq $menu) { throw 'Right-click did not open the context menu.' }
+  return $menu
+}
+
+function Click-MenuItem($menu, [int]$index, [int]$count) {
+  $menuLocation = [FatFishFairySmoke.Native]::Location([int]($menu.ClientWidth / 2), [int]($menu.ClientHeight * ($index + 0.5) / $count))
   [void][FatFishFairySmoke.Native]::SendMessage($menu.Handle, 0x0200, [IntPtr]::Zero, $menuLocation)
   [void][FatFishFairySmoke.Native]::SendMessage($menu.Handle, 0x0201, [IntPtr]1, $menuLocation)
   [void][FatFishFairySmoke.Native]::PostMessage($menu.Handle, 0x0202, [IntPtr]::Zero, $menuLocation)
+}
+
+function Open-ThemesMenu($mainWindow) {
+  $contextMenu = Open-ContextMenu $mainWindow
+  Click-MenuItem $contextMenu 0 2
+  for ($attempt = 0; $attempt -lt 50; $attempt++) {
+    $submenus = @(Get-TestWindows | Where-Object { $_.Handle -ne $mainWindow.Handle -and $_.Handle -ne $contextMenu.Handle -and $_.ClassName -eq $mainWindow.ClassName -and $_.Width -gt 0 -and $_.Height -gt 0 })
+    if ($submenus.Count -eq 1) {
+      if (-not [string]::IsNullOrEmpty($ScreenshotPath)) {
+        Start-Sleep -Milliseconds 200
+        [void][FatFishFairySmoke.Native]::Capture($contextMenu.Handle, [IO.Path]::ChangeExtension($ScreenshotPath, 'menu.png'))
+        [void][FatFishFairySmoke.Native]::Capture($submenus[0].Handle, [IO.Path]::ChangeExtension($ScreenshotPath, 'themes.png'))
+      }
+      return $submenus[0]
+    }
+    Start-Sleep -Milliseconds 100
+  }
+  throw 'The first context-menu item did not open the theme submenu.'
+}
+
+function Assert-Theme($mainWindow, [int]$themeIndex, [switch]$FirstFrame) {
+  for ($attempt = 0; $attempt -lt 10; $attempt++) {
+    $frame = [FatFishFairySmoke.Native]::Capture($mainWindow.Handle, '')
+    if ($frame.ThemeColor -eq $themeColors[$themeIndex]) { break }
+    Start-Sleep -Milliseconds 50
+  }
+  if ($frame.ThemeColor -ne $themeColors[$themeIndex]) {
+    throw "Expected rendered theme $($themeKeys[$themeIndex]) with marker $($themeColors[$themeIndex]), received $($frame.ThemeColor)."
+  }
+  if ($FirstFrame -and $frame.StageColor -ne 0xFFFFFF) { throw 'Switching the theme did not immediately display its first animation frame.' }
+}
+
+function Select-Theme($mainWindow, [int]$themeIndex) {
+  $submenu = Open-ThemesMenu $mainWindow
+  Click-MenuItem $submenu $themeIndex $themeKeys.Count
+  $selected = $null
+  for ($attempt = 0; $attempt -lt 50; $attempt++) {
+    [void](Get-TestWindows)
+    $selected = [IO.File]::ReadAllText($configPath) | ConvertFrom-Json
+    if ($selected.selectedTheme -ceq $themeKeys[$themeIndex]) { break }
+    Start-Sleep -Milliseconds 100
+  }
+  if ($selected.selectedTheme -cne $themeKeys[$themeIndex]) { throw "Selecting theme menu row $themeIndex did not persist $($themeKeys[$themeIndex]); metadata ordering was not preserved." }
+  Assert-Theme $mainWindow $themeIndex -FirstFrame
+  if ($selected.windowX -ne $mainWindow.X -or $selected.windowY -ne $mainWindow.Y -or $selected.retained.value -cne 'untouched') {
+    throw 'Selecting a theme did not preserve the saved window position and unrelated configuration.'
+  }
+}
+
+function Close-ThroughMenu($mainWindow) {
+  $menu = Open-ContextMenu $mainWindow
+  Click-MenuItem $menu 1 2
   for ($attempt = 0; $attempt -lt 50 -and -not $application.HasExited; $attempt++) {
     [void](Get-TestWindows -AllowExit)
     Start-Sleep -Milliseconds 100
@@ -313,9 +395,23 @@ try {
   [void][IO.Directory]::CreateDirectory($fixtureOutput)
   [void][IO.Directory]::CreateDirectory((Join-Path $fixture 'env'))
   Copy-Item -LiteralPath $executable -Destination (Join-Path $fixtureOutput 'FatFishFairy.exe')
-  Copy-Item -LiteralPath (Join-Path $repository 'themes') -Destination (Join-Path $fixture 'themes') -Recurse
+  # Deliberately use keys in nonalphabetical order and distinct Chinese display
+  # names. Menu-row selection verifies order; optional screenshots show the labels.
+  $themeKeys = @('theme_z', 'theme_a', 'theme_m')
+  $themeColors = @(0xE01020, 0x2050E0, 0xE0C010)
+  $themesFolder = Join-Path $fixture 'themes'
+  [void][IO.Directory]::CreateDirectory($themesFolder)
+  [IO.File]::WriteAllText((Join-Path $themesFolder 'theme.json'), '{"theme_z":"默认主题","theme_a":"第二主题","theme_m":"第三主题"}', [Text.UTF8Encoding]::new($false))
+  for ($themeIndex = 0; $themeIndex -lt $themeKeys.Count; $themeIndex++) {
+    $themeFolder = Join-Path $themesFolder $themeKeys[$themeIndex]
+    [void][IO.Directory]::CreateDirectory($themeFolder)
+    [IO.File]::WriteAllText((Join-Path $themeFolder 'index.json'), '{"sample":3}', [Text.UTF8Encoding]::new($false))
+    for ($stage = 1; $stage -le 3; $stage++) {
+      [FatFishFairySmoke.Native]::CreateThemeFrame((Join-Path $themeFolder "sample_$stage.png"), $themeColors[$themeIndex], $stage)
+    }
+  }
   $configPath = Join-Path $fixture 'env/config.json'
-  [IO.File]::WriteAllText($configPath, '{"windowX":123,"windowY":91}', [Text.UTF8Encoding]::new($false))
+  [IO.File]::WriteAllText($configPath, '{"windowX":123,"windowY":91,"retained":{"value":"untouched"}}', [Text.UTF8Encoding]::new($false))
   $application = Start-Process -FilePath (Join-Path $fixtureOutput 'FatFishFairy.exe') -WorkingDirectory $env:SystemRoot -WindowStyle Hidden -PassThru
   $main = Wait-MainWindow
   Assert-Window $main 123 91
@@ -326,6 +422,7 @@ try {
     [void][FatFishFairySmoke.Native]::Capture($greeting.Handle, [IO.Path]::ChangeExtension($ScreenshotPath, 'balloon.png'))
   }
   if ($frame.Colors -lt 64 -or $frame.OpaquePixels -lt 1000) { throw 'The fairy window did not render a character image.' }
+  Assert-Theme $main 0
   $hashes = [Collections.Generic.HashSet[string]]::new()
   [void]$hashes.Add($frame.Hash)
   for ($sample = 0; $sample -lt 5 -and $hashes.Count -lt 2; $sample++) {
@@ -336,6 +433,9 @@ try {
   }
   if ($hashes.Count -lt 2) { throw 'Rendered animation did not advance between frame samples.' }
   Write-Output 'Window bounds, executable-relative configuration, topmost, color-key transparency and animation passed.'
+
+  foreach ($themeIndex in @(1, 2, 0, 1)) { Select-Theme $main $themeIndex }
+  Write-Output 'Missing selection defaulted to the first theme; each submenu row selected its metadata-ordered theme, immediately rendered frame 1 and preserved configuration.'
 
   $main = [FatFishFairySmoke.Native]::Describe($main.Handle)
   $frame = [FatFishFairySmoke.Native]::Capture($main.Handle, '')
@@ -362,6 +462,7 @@ try {
   $moved = [FatFishFairySmoke.Native]::Describe($main.Handle)
   if ($moved.X -eq $main.X -and $moved.Y -eq $main.Y) { throw 'Dragging the visible character did not move the window.' }
   $saved = [IO.File]::ReadAllText($configPath) | ConvertFrom-Json
+  if ($saved.selectedTheme -cne $themeKeys[1] -or $saved.retained.value -cne 'untouched') { throw 'Dragging did not preserve the selected theme and unrelated configuration.' }
   Assert-Window $moved $saved.windowX $saved.windowY
   $movedGreeting = Assert-GreetingMoved $main $greeting $moved
   if (-not [FatFishFairySmoke.Native]::SetWindowPos($moved.Handle, [IntPtr]::Zero, ($moved.X + 29), ($moved.Y + 41), 0, 0, 0x15)) { throw "Cannot move the fairy window through SetWindowPos: Win32 error $([Runtime.InteropServices.Marshal]::GetLastWin32Error())." }
@@ -376,8 +477,22 @@ try {
   $restarted = Wait-MainWindow
   Assert-Window $restarted $saved.windowX $saved.windowY
   [void](Assert-Greeting $restarted)
+  Start-Sleep -Milliseconds 200
+  Assert-Theme $restarted 1
   Close-ThroughMenu $restarted
-  Write-Output 'Restart restored the dragged position from the isolated env folder; second menu exit completed with code 0.'
+  Write-Output 'Restart restored the dragged position and selected theme from the isolated env folder; second menu exit completed with code 0.'
+
+  $saved.selectedTheme = 'unknown_theme'
+  [IO.File]::WriteAllText($configPath, ($saved | ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false))
+  $application.Dispose()
+  $application = Start-Process -FilePath (Join-Path $fixtureOutput 'FatFishFairy.exe') -WorkingDirectory $env:SystemRoot -WindowStyle Hidden -PassThru
+  $fallback = Wait-MainWindow
+  Assert-Window $fallback $saved.windowX $saved.windowY
+  [void](Assert-Greeting $fallback)
+  Start-Sleep -Milliseconds 200
+  Assert-Theme $fallback 0
+  Close-ThroughMenu $fallback
+  Write-Output 'Unknown selectedTheme defaulted to the first theme; final menu exit completed with code 0.'
 } catch {
   $testFailure = $_
   throw

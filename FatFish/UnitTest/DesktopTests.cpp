@@ -118,6 +118,70 @@ TEST_FILE
 		TEST_ASSERT(Folder(root).Delete(true));
 	});
 
+	TEST_CASE(L"Theme selection restores exact catalog keys and preserves position and unrelated settings")
+	{
+		auto root = CreateDesktopTestFolder();
+		auto settings = root / L"custom-location" / L"settings";
+		List<Ptr<DesktopTheme>> themes;
+		for (auto name : { L"second", L"first" })
+		{
+			auto theme = Ptr(new DesktopTheme);
+			theme->name = name;
+			theme->displayName = L"角色" + theme->name;
+			themes.Add(theme);
+		}
+		TEST_ASSERT(LoadSelectedDesktopTheme(settings, themes) == 0);
+		SaveSelectedDesktopTheme(settings, L"first");
+		TEST_ASSERT(LoadSelectedDesktopTheme(settings, themes) == 1);
+		auto initialPosition = LoadDesktopPosition(settings);
+		TEST_ASSERT(initialPosition.x == 0 && initialPosition.y == 0);
+		auto configPath = settings / L"config.json";
+		for (auto fallback : { L"{}", L"{\"selectedTheme\":\"unknown\"}", L"{\"selectedTheme\":\"FIRST\"}",
+			L"{\"selectedTheme\":\"角色first\"}", L"{\"selectedTheme\":\"\"}" })
+		{
+			WriteDesktopFixture(configPath, fallback);
+			TEST_ASSERT(LoadSelectedDesktopTheme(settings, themes) == 0);
+			TEST_ASSERT(File(configPath).ReadAllTextByBom() == fallback);
+		}
+		WriteDesktopFixture(configPath, L"{\"windowX\":-1920,\"windowY\":180,\"selectedTheme\":\"second\",\"future\":{\"title\":\"保留配置\"},\"enabled\":true}");
+		SaveSelectedDesktopTheme(settings, L"first");
+		TEST_ASSERT(LoadSelectedDesktopTheme(settings, themes) == 1);
+		auto position = LoadDesktopPosition(settings);
+		TEST_ASSERT(position.x == -1920 && position.y == 180);
+		SaveDesktopPosition(settings, { -800, 90 });
+		TEST_ASSERT(LoadSelectedDesktopTheme(settings, themes) == 1);
+		json::Parser parser;
+		auto saved = ParseJson(File(configPath).ReadAllTextByBom(), parser);
+		TEST_ASSERT(GetString(GetField(saved, L"future"), L"title") == L"保留配置");
+		TEST_ASSERT(GetField(saved, L"enabled").Cast<json::JsonLiteral>()->value == json::JsonLiteralValue::True);
+		TEST_ASSERT(Folder(root).Delete(true));
+	});
+
+	TEST_CASE(L"Theme selection rejects malformed configuration without overwriting it")
+	{
+		auto root = CreateDesktopTestFolder();
+		auto configPath = root / L"config.json";
+		List<Ptr<DesktopTheme>> themes;
+		ExpectDesktopFailure([&] { LoadSelectedDesktopTheme(root, themes); });
+		auto theme = Ptr(new DesktopTheme);
+		theme->name = L"first";
+		themes.Add(theme);
+		for (auto malformed : { L"[]", L"{", L"{\"selectedTheme\":1}", L"{\"selectedTheme\":null}",
+			L"{\"selectedTheme\":true}", L"{\"selectedTheme\":{}}", L"{\"selectedTheme\":[]}",
+			L"{\"selectedTheme\":\"first\",\"selectedTheme\":\"first\"}", L"{\"windowX\":\"0\"}" })
+		{
+			WriteDesktopFixture(configPath, malformed);
+			ExpectDesktopFailure([&] { LoadSelectedDesktopTheme(root, themes); });
+			ExpectDesktopFailure([&] { SaveSelectedDesktopTheme(root, L"first"); });
+			ExpectDesktopFailure([&] { SaveDesktopPosition(root, { 20, 30 }); });
+			TEST_ASSERT(File(configPath).ReadAllTextByBom() == malformed);
+		}
+		TEST_ASSERT(File(configPath).Delete() && Folder(configPath).Create(false));
+		ExpectDesktopFailure([&] { LoadSelectedDesktopTheme(root, themes); });
+		ExpectDesktopFailure([&] { SaveSelectedDesktopTheme(root, L"first"); });
+		TEST_ASSERT(Folder(root).Delete(true));
+	});
+
 	TEST_CASE(L"Theme metadata rejects path escapes, invalid counts and duplicate Windows paths")
 	{
 		auto root = CreateDesktopTestFolder();
@@ -198,5 +262,51 @@ TEST_FILE
 		ExpectDesktopFailure([&] { ThemePlayback invalid(empty, 1); });
 		empty->animations.Add(Ptr(new ThemeAnimation));
 		ExpectDesktopFailure([&] { ThemePlayback invalid(empty, 1); });
+	});
+
+	TEST_CASE(L"Switching themes resets the frame and three playthroughs while retaining random state")
+	{
+		List<Ptr<DesktopTheme>> themes;
+		for (auto themeName : { L"old", L"new" })
+		{
+			auto theme = Ptr(new DesktopTheme);
+			theme->name = themeName;
+			for (vint series = 0; series < 3; series++)
+			{
+				auto animation = Ptr(new ThemeAnimation);
+				animation->name = L"series" + itow(series);
+				for (vint frame = 1; frame <= 2; frame++)
+					animation->frames.Add(FilePath(L"C:\\synthetic-artwork") / themeName / (animation->name + L"_" + itow(frame) + L".png"));
+				theme->animations.Add(animation);
+			}
+			themes.Add(theme);
+		}
+		ThemePlayback playback(themes[0], 12345);
+		ThemePlayback uninterrupted(themes[1], 12345);
+		auto originalFrame = playback.CurrentFrame();
+		ExpectDesktopFailure([&] { playback.SetTheme(nullptr); });
+		auto invalid = Ptr(new DesktopTheme);
+		ExpectDesktopFailure([&] { playback.SetTheme(invalid); });
+		invalid->animations.Add(nullptr);
+		ExpectDesktopFailure([&] { playback.SetTheme(invalid); });
+		invalid->animations.Clear();
+		invalid->animations.Add(Ptr(new ThemeAnimation));
+		ExpectDesktopFailure([&] { playback.SetTheme(invalid); });
+		TEST_ASSERT(playback.CurrentFrame().GetFullPath() == originalFrame.GetFullPath());
+		for (vint change = 0; change < 32; change++)
+		{
+			// Switch after two complete playthroughs and the first frame of the third.
+			for (vint frame = 0; frame < 5; frame++) playback.Advance();
+			// Completing a series consumes the same next random choice as changing theme.
+			for (vint frame = 0; frame < 6; frame++) uninterrupted.Advance();
+			playback.SetTheme(themes[1]);
+			TEST_ASSERT(playback.CurrentFrame().GetName() == playback.CurrentAnimation() + L"_1.png");
+			for (vint frame = 0; frame < 6; frame++)
+			{
+				TEST_ASSERT(playback.CurrentFrame().GetFullPath() == uninterrupted.CurrentFrame().GetFullPath());
+				playback.Advance();
+				uninterrupted.Advance();
+			}
+		}
 	});
 }

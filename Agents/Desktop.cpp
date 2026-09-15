@@ -44,7 +44,18 @@ namespace fatfish
 		auto object = File(path).Exists() ? ReadDesktopJson(path, parser) : Ptr(new json::JsonObject);
 		ReadDesktopCoordinate(object, L"windowX");
 		ReadDesktopCoordinate(object, L"windowY");
+		auto selectedTheme = GetField(object, L"selectedTheme");
+		if (selectedTheme && !selectedTheme.Cast<json::JsonString>())
+			throw Exception(L"The selected desktop theme must be a string.");
 		return object;
+	}
+
+	void WriteDesktopConfig(const FilePath& envFolder, Ptr<json::JsonObject> object)
+	{
+		if (!Folder(envFolder).Exists() && !Folder(envFolder).Create(true))
+			throw Exception(L"Cannot create the supplied environment folder.");
+		if (!File(envFolder / L"config.json").WriteAllText(json::JsonToString(object), true, stream::BomEncoder::Utf8))
+			throw Exception(L"Cannot save config.json.");
 	}
 
 	DesktopPosition LoadDesktopPosition(const FilePath& envFolder)
@@ -64,10 +75,29 @@ namespace fatfish
 		auto object = ReadDesktopConfig(envFolder, parser);
 		SetInteger(object, L"windowX", position.x);
 		SetInteger(object, L"windowY", position.y);
-		if (!Folder(envFolder).Exists() && !Folder(envFolder).Create(true))
-			throw Exception(L"Cannot create the supplied environment folder.");
-		if (!File(envFolder / L"config.json").WriteAllText(json::JsonToString(object), true, stream::BomEncoder::Utf8))
-			throw Exception(L"Cannot save config.json.");
+		WriteDesktopConfig(envFolder, object);
+	}
+
+	vint LoadSelectedDesktopTheme(const FilePath& envFolder, const List<Ptr<DesktopTheme>>& themes)
+	{
+		if (themes.Count() == 0) throw Exception(L"Theme selection requires a nonempty catalog.");
+		json::Parser parser;
+		auto object = ReadDesktopConfig(envFolder, parser);
+		auto selectedTheme = GetField(object, L"selectedTheme").Cast<json::JsonString>();
+		if (selectedTheme)
+		{
+			for (vint i = 0; i < themes.Count(); i++)
+				if (themes[i]->name == selectedTheme->content.value) return i;
+		}
+		return 0;
+	}
+
+	void SaveSelectedDesktopTheme(const FilePath& envFolder, const WString& themeName)
+	{
+		json::Parser parser;
+		auto object = ReadDesktopConfig(envFolder, parser);
+		SetString(object, L"selectedTheme", themeName);
+		WriteDesktopConfig(envFolder, object);
 	}
 
 	void ValidateDesktopId(const WString& name, SortedList<WString>& names)
@@ -128,12 +158,17 @@ namespace fatfish
 	}
 
 	ThemePlayback::ThemePlayback(Ptr<DesktopTheme> desktopTheme, vuint64_t seed)
-		: theme(desktopTheme)
-		, random(seed)
+		: random(seed)
 	{
-		if (!theme || theme->animations.Count() == 0) throw Exception(L"Playback requires a theme with animations.");
-		for (auto animation : theme->animations)
+		SetTheme(desktopTheme);
+	}
+
+	void ThemePlayback::SetTheme(Ptr<DesktopTheme> desktopTheme)
+	{
+		if (!desktopTheme || desktopTheme->animations.Count() == 0) throw Exception(L"Playback requires a theme with animations.");
+		for (auto animation : desktopTheme->animations)
 			if (!animation || animation->frames.Count() == 0) throw Exception(L"Playback requires nonempty animations.");
+		theme = desktopTheme;
 		SelectAnimation();
 	}
 

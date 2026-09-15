@@ -34,6 +34,7 @@
         ClientSize="x:384 y:384"
         ControlTemplate="fatfish::ui::FairyWindowTemplate">
         <ToolstripMenu ref.Name="contextMenu">
+          <MenuItemButton ref.Name="themeMenuItem" Text="主题" />
           <MenuItemButton Text="退出">
             <ev.Clicked-eval><![CDATA[{ self.Close(); }]]></ev.Clicked-eval>
           </MenuItemButton>

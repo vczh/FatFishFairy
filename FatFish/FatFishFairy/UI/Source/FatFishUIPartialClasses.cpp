@@ -106,6 +106,16 @@ namespace fatfish
 				::vl::__vwsn::This(__vwsn_this_)->SetNamedObject(::vl::WString::Unmanaged(L"contextMenu"), ::vl::__vwsn::Box(this->contextMenu));
 			}
 			{
+				(this->themeMenuItem = new ::vl::presentation::controls::GuiToolstripButton(::vl::presentation::theme::ThemeName::MenuItemButton));
+				::vl::__vwsn::This(__vwsn_this_)->SetNamedObject(::vl::WString::Unmanaged(L"themeMenuItem"), ::vl::__vwsn::Box(this->themeMenuItem));
+			}
+			{
+				::vl::__vwsn::This(this->themeMenuItem)->SetText(::vl::WString::Unmanaged(L"主题"));
+			}
+			{
+				::vl::__vwsn::This(::vl::__vwsn::UnboxCollection<::vl::reflection::description::IValueList>(::vl::__vwsn::This(this->contextMenu)->GetToolstripItems()).Obj())->Add(::vl::__vwsn::Box(this->themeMenuItem));
+			}
+			{
 				(this->__vwsn_precompile_0 = new ::vl::presentation::controls::GuiToolstripButton(::vl::presentation::theme::ThemeName::MenuItemButton));
 			}
 			{
@@ -142,6 +152,7 @@ namespace fatfish
 		FairyWindowConstructor::FairyWindowConstructor()
 			: self(static_cast<::fatfish::ui::FairyWindow*>(nullptr))
 			, contextMenu(static_cast<::vl::presentation::controls::GuiToolstripMenu*>(nullptr))
+			, themeMenuItem(static_cast<::vl::presentation::controls::GuiToolstripButton*>(nullptr))
 			, fairyCanvas(static_cast<::vl::presentation::compositions::GuiBoundsComposition*>(nullptr))
 			, fairyImage(::vl::Ptr<::vl::presentation::elements::GuiImageFrameElement>())
 			, __vwsn_precompile_0(static_cast<::vl::presentation::controls::GuiToolstripButton*>(nullptr))

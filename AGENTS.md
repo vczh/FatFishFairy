@@ -157,7 +157,7 @@ You are not recommended to modify this library, but if you really need to:
 
 ### Agents
 
-- `FatFishCli`, `FatFishFairy` or any other interactive test apps should only be a thin UI layer. `Agents/Desktop.h` contains desktop position persistence, theme metadata loading and animation sequencing; the GUI owns native windows, image decoding and rendering.
+- `FatFishCli`, `FatFishFairy` or any other interactive test apps should only be a thin UI layer. `Agents/Desktop.h` contains desktop position and theme selection persistence, theme metadata loading and animation sequencing; the GUI owns native windows, image decoding and rendering.
 - `FatFishCli` and `FatFishFairy` own the locations of `env` and `memory`. Each app must first obtain its own executable's full path, then use `vl::filesystem::FilePath`, `GetFolder()` and `/` to calculate both folders and pass them as two separate `vl::filesystem::FilePath` arguments to `FairyApplication`.
 - Match `FatFish/Common.props`: executables are in `REPO-ROOT/FatFish/x64/<Configuration>` for x64 and `REPO-ROOT/FatFish/<Configuration>` for Win32. From `vl::filesystem::FilePath(executable).GetFolder()`, use `L"../../../env"` and `L"../../../memory"` for x64, or `L"../../env"` and `L"../../memory"` for Win32, in both Debug and Release. Update this calculation in both apps if the output layout changes.
 - Default folder resolution must depend on the executable location, not the working directory or an upward search for marker files. Any explicit path override (such as CLI `--repo-root PATH`) is also resolved by the UI before passing the two folders to `Agents`.
@@ -192,8 +192,9 @@ CONTENT
 - From `REPO-ROOT/FatFish`, run `& "$PWD/../Release/.github/Scripts/copilotBuild.ps1" -Configuration Debug -Platform x64`, followed by `& "$PWD/../Release/.github/Scripts/copilotExecute.ps1" -Mode UnitTest -Executable UnitTest -Configuration Debug -Platform x64`. Use the corresponding configuration and platform for the other builds.
 - Offline `UnitTest` verification must use synthetic model responses and temporary directories without reading real credentials, capturing the desktop, or making network requests. Cover memory safety, configuration validation, completion streaming, response formatting, error feedback, and multi-round agent execution.
 - Offline verification must cover multiple `speak` calls within one response and across follow-ups for both agents, complete vision-to-fairy forwarding, per-round result isolation, and an empty fairy `speak`.
+- Offline desktop tests must cover theme catalog order, exact-key selection and fallback, invalid selection types, and saving the selected theme without losing coordinates or unrelated configuration fields.
 - For platform integration verification, run `REPO-ROOT/FatFish/UnitTest/Invoke.ps1` in PowerShell 7 after building `FatFishCli`. This opt-in test captures the desktop and uses only a local loopback fixture implemented by `Server.ps1` in the same folder.
-- For desktop-window integration, run `FatFish/UnitTest/Invoke-Fairy.ps1` in PowerShell 7. It uses a temporary executable/theme/config layout, verifies transparency, animation, the startup balloon and its movement, dragging, persistence and menu exit, and never copies credentials. It moves the mouse during the test and restores the pointer afterwards.
+- For desktop-window integration, run `FatFish/UnitTest/Invoke-Fairy.ps1` in PowerShell 7. It uses a temporary executable/theme/config layout, verifies transparency, animation, the startup balloon and its movement, dragging, theme menu order, theme switching and persistence, startup selection and fallback, and menu exit, and never copies credentials. Pass `-ScreenshotPath PATH` to save menu screenshots for visual checks of the Chinese display names and selection mark. It moves the mouse during the test and restores the pointer afterwards.
 - Verification must include 10 consecutive successful `ENTER` rounds in `FatFishCli`, using the configured real models in one running process.
 - Each round must finish the vision agent followed by the fairy agent successfully. After all 10 rounds, press `ESC` and verify a clean exit.
 - If any round fails, fix the problem and restart the 10-round verification before reporting completion.
@@ -215,13 +216,13 @@ The main window is always top-most.
 On startup, show `Hello, world!` in a native Win32 tracking balloon tooltip (`TOOLTIPS_CLASSW`, `TTS_BALLOON`, `TTF_TRACK`) just above the window, with its stem pointing down at the window's top center. Keep it visible until the window closes and update its screen position from the GacUI `Moved()` callback, calling the base implementation first. Create and activate it when `WindowOpened` fires. Windows chooses stem direction automatically: use `TTM_TRACKPOSITION` at a point inside the related monitor's bottom edge to obtain its above-target layout, then measure the complete window with `GetWindowRect` and the stem's horizontal offset from that target. Cache the layout target to avoid moving the tooltip back to the monitor edge during ordinary dragging; use `SetWindowPos` to move the complete native shape above the fairy and clamp it to the monitor's work area. Use the first screen if the fairy is wholly off-screen. Do not use `TTF_ABSOLUTE`, which leaves the stem pointing upward when the whole balloon is placed above the fairy. Own and destroy its `HWND` in `FairyDesktopWindow`. The executable opts into common controls v6 for system visual styles and the current `TOOLINFO` layout. Do not use a polling timer for bubble positioning. The desktop integration test must inspect the balloon's native window region to verify its downward stem and target, as window bounds alone cannot detect a reversed pointer.
 Dragging the main window using left button moves the window. Remember the local cursor position on left `mouseDown`; on `mouseMove`, move the current native bounds by the converted difference from that fixed anchor. GacUI handles capture automatically. Save the position on left `mouseUp`; do not initiate native caption dragging or manage capture manually.
 Right click the main window shows a menu organized as below:
-- `主题`: A menu placeholder:
-  - After loading the app, all themes must be filled to its sub menu in the listed order, menu texts are theme names instead of theme keys.
-  - When the user switch to another, it should be written to the `selectedTheme` key in `config.json`.
-  - `selectedTheme` should be read to set the current theme, but when this key is missing or the specified theme does not exist, use the first one as default.
+- `主题`: A menu placeholder defined in `UI/Resource.xml`; C++ creates and populates its submenu after loading the theme catalog:
+  - List every theme in `themes/theme.json` order, using its Chinese display name instead of its folder key. Check the current theme's menu item.
+  - Switching themes saves the exact folder key as `selectedTheme` in `config.json`, immediately chooses an animation from that theme, and displays its first frame with a fresh one-second playback interval.
+  - At startup, restore the theme with the exact `selectedTheme` key. If the key is missing or does not match a catalog entry, use the first theme. A present value with a non-string type is a configuration error.
 - `退出`: Exit the application.
 
-Define the named `contextMenu` ToolstripMenu component and its exit action in `UI/Resource.xml`. C++ only opens that generated component in response to right-click.
+Define the named `contextMenu` ToolstripMenu component, its theme placeholder and its exit action in `UI/Resource.xml`. C++ creates and populates the theme placeholder's submenu and opens the generated context menu in response to right-click.
 
 `REPO-ROOT/env/config.json` looks like this
 ```JSON
@@ -231,8 +232,8 @@ Define the named `contextMenu` ToolstripMenu component and its exit action in `U
   "selectedTheme": "loli_maid"
 }
 ```
-This file defines the initial location of the main window. When stopping dragging the main window, this file should be updated to reflect the current location, therefore it is remembered and used at the next startup.
-`config.json` is ignored by Git. Missing files or missing coordinates default to zero; dragging creates the file and preserves unrelated settings. Coordinates are signed 32-bit desktop coordinates, including negative positions on other monitors. Malformed configuration and missing or invalid theme frames fail explicitly.
+This file defines the initial location and selected theme of the main window. Save the location when dragging stops and save the theme when it changes, so both are restored at the next startup.
+`config.json` is ignored by Git. Missing files or missing coordinates default to zero; dragging or switching themes creates the file as needed. Shared configuration persistence updates only the requested fields, preserving the other setting and unrelated fields. Coordinates are signed 32-bit desktop coordinates, including negative positions on other monitors. Malformed configuration, non-string `selectedTheme` values and missing or invalid theme frames fail explicitly.
 
 ### Executing Agents
 
@@ -244,7 +245,7 @@ Theme assets are maintained separately from the desktop window implementation. F
 
 For `reading_manga`, the viewer sees the book's outer covers; a turning interior page rises behind those covers and stays attached to the binding. For `playing`, the character kneels with smooth knees in front and feet folded behind under the skirt. For `programming`, the viewer sees the monitor's rear casing with blue `C++` lettering, never screen contents. Preserve these corrections when updating later frames.
 
-The desktop player uses the first theme in `themes/theme.json`, selects an animation series randomly within that theme, shows one frame per second, and plays its complete frame sequence three consecutive times in total. It selects the next series randomly only after the last frame of the third playthrough, and seeds its random generator afresh on each process start. `index.json` defines the distinct frame count. Playback is implemented by `Agents/Desktop.cpp` and the GUI timer, separately from the asset update job.
+The desktop player uses the selected theme, falling back to the first theme in `themes/theme.json` when no saved key matches. It selects an animation series randomly within that theme, shows one frame per second, and plays its complete frame sequence three consecutive times in total. It selects the next series randomly only after the last frame of the third playthrough, unless the user switches themes, and seeds its random generator afresh on each process start. Switching themes starts a fresh animation sequence immediately. `index.json` defines the distinct frame count. Playback is implemented by `Agents/Desktop.cpp` and the GUI timer, separately from the asset update job.
 
 `FairyDesktopWindow` implements `INativeControllerListener::GlobalTimer` and updates the image only after at least 1000 monotonic milliseconds. Register the listener after initializing the window and unregister it in the derived destructor. GacUI already runs the global timer; do not start a separate timer or create an `IGuiAnimation` for frame playback.
 
@@ -256,3 +257,4 @@ You can write anything in this section during development to make future works m
 
 - Current GacUI composition input uses `mouseDown`/`mouseUp` plus `GuiMouseEventArgs::button`, and `mouseMove` plus `arguments.left`. Event coordinates are GUI units; convert movement deltas with `INativeWindow::Convert` before updating native bounds. Keep the mouse-down anchor unchanged because moving the window updates the cursor's relative position.
 - Use an adjacent `GacUI.xml` driver for GacBuild. Passing the resource itself as its driver makes its resource compiler replace the same `.log` folder that contains GacBuild's enumeration files.
+- DarkSkin's menu template does not render a check for `Selected`; theme menu items show `✓` in their trailing `ShortcutText` slot and update it together with `Selected`.

@@ -47,6 +47,7 @@ namespace fatfish
 		protected:
 			::fatfish::ui::FairyWindow* self;
 			::vl::presentation::controls::GuiToolstripMenu* contextMenu;
+			::vl::presentation::controls::GuiToolstripButton* themeMenuItem;
 			::vl::presentation::compositions::GuiBoundsComposition* fairyCanvas;
 			::vl::Ptr<::vl::presentation::elements::GuiImageFrameElement> fairyImage;
 			::vl::presentation::controls::GuiToolstripButton* __vwsn_precompile_0;

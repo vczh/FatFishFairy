@@ -35,6 +35,9 @@ namespace fatfish
 	// Theme and animation IDs contain only ASCII letters, digits, underscores and hyphens.
 	// Preserve metadata order; all declared frames must exist before replacing the output.
 	extern void LoadDesktopThemes(const vl::filesystem::FilePath& themesFolder, vl::collections::List<vl::Ptr<DesktopTheme>>& themes);
+	// Select an exact catalog key; missing and unknown keys fall back to the first theme.
+	extern vl::vint LoadSelectedDesktopTheme(const vl::filesystem::FilePath& envFolder, const vl::collections::List<vl::Ptr<DesktopTheme>>& themes);
+	extern void SaveSelectedDesktopTheme(const vl::filesystem::FilePath& envFolder, const vl::WString& themeName);
 
 	class ThemePlayback
 	{
@@ -48,8 +51,10 @@ namespace fatfish
 		void                                            SelectAnimation();
 
 	public:
-		// Supply a fresh seed on each process start. The theme must remain unchanged.
+		// Supply a fresh seed on each process start. Do not mutate themes while playing them.
 		                                                ThemePlayback(vl::Ptr<DesktopTheme> desktopTheme, vl::vuint64_t seed);
+		// Immediately begin a random series at frame one, retaining the player's random state.
+		void                                            SetTheme(vl::Ptr<DesktopTheme> desktopTheme);
 		const vl::filesystem::FilePath&                  CurrentFrame() const;
 		const vl::WString&                              CurrentAnimation() const;
 		// Call once per second after displaying CurrentFrame(). Play every series three times.
