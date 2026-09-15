@@ -65,6 +65,10 @@ namespace FatFishFairySmoke
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowText(IntPtr window, StringBuilder text, int capacity);
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(IntPtr window, StringBuilder text, int capacity);
         [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr window, out Rect rect);
+        [DllImport("user32.dll")] private static extern int GetWindowRgn(IntPtr window, IntPtr region);
+        [DllImport("gdi32.dll")] private static extern IntPtr CreateRectRgn(int left, int top, int right, int bottom);
+        [DllImport("gdi32.dll")] private static extern bool PtInRegion(IntPtr region, int x, int y);
+        [DllImport("gdi32.dll")] private static extern bool DeleteObject(IntPtr value);
         [DllImport("user32.dll")] private static extern bool GetClientRect(IntPtr window, out Rect rect);
         [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] private static extern IntPtr GetWindowLongPtr64(IntPtr window, int index);
         [DllImport("user32.dll", EntryPoint = "GetWindowLongW")] private static extern int GetWindowLong32(IntPtr window, int index);
@@ -96,6 +100,34 @@ namespace FatFishFairySmoke
             if (SendMessageTimeout(window, 0x000D, new IntPtr(text.Capacity), text, 2, 1000, out result) == IntPtr.Zero)
                 throw new InvalidOperationException("Cannot read the greeting balloon text.");
             return text.ToString();
+        }
+
+        public static Point DownwardStem(Window balloon)
+        {
+            IntPtr region = CreateRectRgn(0, 0, 0, 0);
+            if (region == IntPtr.Zero) throw new InvalidOperationException("Cannot allocate a balloon region.");
+            try
+            {
+                if (GetWindowRgn(balloon.Handle, region) <= 1)
+                    throw new InvalidOperationException("Cannot inspect the native balloon shape.");
+                int topWidth = 0, bottomWidth = 0;
+                for (int x = 0; x < balloon.Width; x++)
+                {
+                    if (PtInRegion(region, x, balloon.Height / 4)) topWidth++;
+                    if (PtInRegion(region, x, balloon.Height * 3 / 4)) bottomWidth++;
+                }
+                if (topWidth * 2 < balloon.Width || bottomWidth == 0 || bottomWidth * 3 >= topWidth)
+                    throw new InvalidOperationException($"Expected a wide balloon body above a narrow downward stem; top/bottom widths are {topWidth}/{bottomWidth} in {balloon.Width}x{balloon.Height}.");
+                for (int y = balloon.Height - 1; y >= balloon.Height * 3 / 4; y--)
+                {
+                    int left = balloon.Width, right = -1;
+                    for (int x = 0; x < balloon.Width; x++)
+                        if (PtInRegion(region, x, y)) { left = Math.Min(left, x); right = x; }
+                    if (right >= left) return new Point { X = balloon.X + (left + right) / 2, Y = balloon.Y + y };
+                }
+                throw new InvalidOperationException("The greeting balloon has no bottom stem tip.");
+            }
+            finally { DeleteObject(region); }
         }
 
         public static Window Describe(IntPtr handle)
@@ -236,6 +268,12 @@ function Assert-Greeting($mainWindow) {
     throw "The greeting balloon must sit just above the fairy: balloon ($($balloon.X), $($balloon.Y), $($balloon.Width), $($balloon.Height)), fairy ($($mainWindow.X), $($mainWindow.Y))."
   }
   if ($balloon.X -ge ($mainWindow.X + $mainWindow.Width) -or ($balloon.X + $balloon.Width) -le $mainWindow.X) { throw 'The greeting balloon must overlap the fairy horizontally.' }
+  $stem = [FatFishFairySmoke.Native]::DownwardStem($balloon)
+  $targetX = $mainWindow.X + $mainWindow.Width / 2
+  $stemGap = $mainWindow.Y - $stem.Y
+  if ([Math]::Abs($stem.X - $targetX) -gt 4 -or $stemGap -lt -2 -or $stemGap -gt 24) {
+    throw "The downward balloon tip must point at the fairy's top center: tip ($($stem.X), $($stem.Y)), target ($targetX, $($mainWindow.Y))."
+  }
   return $balloon
 }
 

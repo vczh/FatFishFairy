@@ -43,27 +43,42 @@ private:
 	vuint64_t                               lastFrameTime = 0;
 	HWND                                    speechBubble = nullptr;
 	TOOLINFOW                               speechTool = {};
+	Nullable<NativePoint>                   speechLayoutTarget;
+	vint                                    speechStemX = 0;
 
 	void UpdateSpeechPosition()
 	{
 		if (!speechBubble) return;
 		auto bounds = GetNativeWindow()->GetBounds();
-		// Measure the displayed window so the balloon stem is included in its height.
+		auto screen = GetRelatedScreen();
+		if (!screen) screen = GetCurrentController()->ScreenService()->GetScreen(vint(0));
+		auto workArea = screen->GetClientBounds();
+		// Windows has no flag for stem direction. At the monitor's bottom edge it
+		// lays out the native balloon above its target, with the stem pointing down.
+		// Move that complete shape above the fairy without changing its layout.
+		NativePoint layoutTarget(workArea.x1.value + workArea.Width().value / 2, screen->GetBounds().y2.value - 1);
+		if (!speechLayoutTarget || speechLayoutTarget.Value() != layoutTarget)
+		{
+			SendMessageW(speechBubble, TTM_TRACKPOSITION, 0, MAKELPARAM(layoutTarget.x.value, layoutTarget.y.value));
+			RECT layout;
+			if (!GetWindowRect(speechBubble, &layout)) throw Exception(L"Cannot measure system speech bubble stem.");
+			speechStemX = layoutTarget.x.value - layout.left;
+			speechLayoutTarget = layoutTarget;
+		}
 		RECT bubble;
 		if (!GetWindowRect(speechBubble, &bubble)) throw Exception(L"Cannot measure system speech bubble.");
 		auto width = bubble.right - bubble.left;
 		auto height = bubble.bottom - bubble.top;
-		auto x = bounds.x1.value + (bounds.Width().value - width) / 2;
+		auto x = bounds.x1.value + bounds.Width().value / 2 - speechStemX;
 		auto y = bounds.y1.value - height;
-		if (auto screen = GetRelatedScreen())
+		if (x + width > workArea.x2.value) x = workArea.x2.value - width;
+		if (x < workArea.x1.value) x = workArea.x1.value;
+		if (y + height > workArea.y2.value) y = workArea.y2.value - height;
+		if (y < workArea.y1.value) y = workArea.y1.value;
+		if (!SetWindowPos(speechBubble, nullptr, static_cast<int>(x), static_cast<int>(y), 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE))
 		{
-			auto workArea = screen->GetClientBounds();
-			if (x + width > workArea.x2.value) x = workArea.x2.value - width;
-			if (x < workArea.x1.value) x = workArea.x1.value;
-			if (y + height > workArea.y2.value) y = workArea.y2.value - height;
-			if (y < workArea.y1.value) y = workArea.y1.value;
+			throw Exception(L"Cannot position system speech bubble.");
 		}
-		SendMessageW(speechBubble, TTM_TRACKPOSITION, 0, MAKELPARAM(x, y));
 	}
 
 	void OnWindowOpened(GuiGraphicsComposition* sender, GuiEventArgs& arguments)
@@ -78,7 +93,7 @@ private:
 			hwnd, nullptr, GetModuleHandleW(nullptr), nullptr);
 		if (!speechBubble) throw Exception(L"Cannot create system speech bubble.");
 		speechTool.cbSize = sizeof(speechTool);
-		speechTool.uFlags = TTF_IDISHWND | TTF_TRACK | TTF_ABSOLUTE;
+		speechTool.uFlags = TTF_IDISHWND | TTF_TRACK;
 		speechTool.hwnd = hwnd;
 		speechTool.uId = reinterpret_cast<UINT_PTR>(hwnd);
 		static wchar_t greeting[] = L"Hello, world!";
