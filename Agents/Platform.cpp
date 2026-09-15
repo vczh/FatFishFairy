@@ -3,6 +3,7 @@
 #include <VlppOS.Windows.h>
 #include <winhttp.h>
 #include <wincodec.h>
+#include <exception>
 
 #pragma comment(lib, "winhttp.lib")
 #pragma comment(lib, "windowscodecs.lib")
@@ -21,6 +22,22 @@ namespace fatfish
 	OperationCancelled::OperationCancelled()
 		: Exception(L"Agent execution was cancelled.")
 	{
+	}
+
+	ScreenCaptureUnavailable::ScreenCaptureUnavailable()
+		: Exception(L"No accessible desktop monitors are available to capture.")
+	{
+	}
+
+	MonitorCaptureError::MonitorCaptureError(const WString& operation, vuint32_t code)
+		: Exception(operation + L" failed (Windows error " + itow(code) + L").")
+		, errorCode(code)
+	{
+	}
+
+	vuint32_t MonitorCaptureError::ErrorCode() const
+	{
+		return errorCode;
 	}
 
 	CancellationToken::CancellationToken()
@@ -192,7 +209,11 @@ namespace fatfish
 
 	void CheckPlatformResult(bool succeeded, const wchar_t* operation)
 	{
-		if (!succeeded) throw Exception(WString(operation) + L" failed (Windows error " + itow(GetLastError()) + L").");
+		if (!succeeded)
+		{
+			auto errorCode = GetLastError();
+			throw Exception(WString(operation) + L" failed (Windows error " + itow(errorCode) + L").");
+		}
 	}
 
 	struct InternetHandle
@@ -397,10 +418,62 @@ namespace fatfish
 		if (FAILED(result)) throw Exception(WString(operation) + L" failed (HRESULT " + itow(result) + L").");
 	}
 
+	void CheckCaptureResult(bool succeeded, const wchar_t* operation)
+	{
+		if (!succeeded)
+		{
+			// Save the thread error before constructing strings or unwinding GDI resources.
+			auto errorCode = GetLastError();
+			throw MonitorCaptureError(operation, errorCode);
+		}
+	}
+
+	void CaptureMonitors(List<MonitorSnapshot>& snapshots, const Func<vint()>& enumerateMonitors,
+		const Func<MonitorSnapshot(vint)>& captureMonitor)
+	{
+		snapshots.Clear();
+		vint monitorCount;
+		try
+		{
+			monitorCount = enumerateMonitors();
+		}
+		catch (const MonitorCaptureError& error)
+		{
+			if (error.ErrorCode() == ERROR_ACCESS_DENIED) throw ScreenCaptureUnavailable();
+			throw;
+		}
+		if (monitorCount == 0) throw ScreenCaptureUnavailable();
+		std::exception_ptr firstFailure;
+		for (vint index = 0; index < monitorCount; index++)
+		{
+			try
+			{
+				snapshots.Add(captureMonitor(index));
+			}
+			catch (const OperationCancelled&)
+			{
+				throw;
+			}
+			catch (const MonitorCaptureError& error)
+			{
+				if (error.ErrorCode() != ERROR_ACCESS_DENIED && !firstFailure) firstFailure = std::current_exception();
+			}
+			catch (const Exception&)
+			{
+				if (!firstFailure) firstFailure = std::current_exception();
+			}
+		}
+		if (snapshots.Count() > 0) return;
+		// Keep the original type and message when a non-access failure prevents every capture.
+		if (firstFailure) std::rethrow_exception(firstFailure);
+		throw ScreenCaptureUnavailable();
+	}
+
 	struct CaptureScope
 	{
 		HRESULT					comResult = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
 		DPI_AWARENESS_CONTEXT	dpiContext = SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+		DWORD					dpiError = dpiContext ? ERROR_SUCCESS : GetLastError();
 		~CaptureScope()
 		{
 			if (dpiContext) SetThreadDpiAwarenessContext(dpiContext);
@@ -410,7 +483,7 @@ namespace fatfish
 
 	struct MonitorBitmap
 	{
-		HDC				screen = GetDC(nullptr);
+		HDC				screen = nullptr;
 		HDC				memory = nullptr;
 		HBITMAP			bitmap = nullptr;
 		HGDIOBJ			previous = nullptr;
@@ -425,25 +498,30 @@ namespace fatfish
 
 	void CaptureMonitors(List<MonitorSnapshot>& snapshots)
 	{
+		snapshots.Clear();
 		CaptureScope scope;
 		if (scope.comResult != RPC_E_CHANGED_MODE) CheckImagingResult(scope.comResult, L"CoInitializeEx");
-		CheckPlatformResult(scope.dpiContext != nullptr, L"SetThreadDpiAwarenessContext");
+		if (!scope.dpiContext) throw MonitorCaptureError(L"SetThreadDpiAwarenessContext", scope.dpiError);
 		IWICImagingFactory* factoryRaw = nullptr;
 		CheckImagingResult(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factoryRaw)), L"CoCreateInstance(WIC)");
 		ComPtr<IWICImagingFactory> factory(factoryRaw);
 		List<HMONITOR> monitors;
-		CheckPlatformResult(EnumDisplayMonitors(nullptr, nullptr, [](HMONITOR monitor, HDC, LPRECT, LPARAM context) -> BOOL
+		// Clear last error before capture APIs so a failure without its own error cannot reuse stale access denial.
+		CaptureMonitors(snapshots, [&]()
 		{
-			reinterpret_cast<List<HMONITOR>*>(context)->Add(monitor);
-			return TRUE;
-		}, reinterpret_cast<LPARAM>(&monitors)), L"EnumDisplayMonitors");
-		if (monitors.Count() == 0) throw Exception(L"No active monitors are available to capture.");
-		snapshots.Clear();
-		for (auto monitor : monitors)
+			SetLastError(ERROR_SUCCESS);
+			CheckCaptureResult(EnumDisplayMonitors(nullptr, nullptr, [](HMONITOR monitor, HDC, LPRECT, LPARAM context) -> BOOL
+			{
+				reinterpret_cast<List<HMONITOR>*>(context)->Add(monitor);
+				return TRUE;
+			}, reinterpret_cast<LPARAM>(&monitors)), L"EnumDisplayMonitors");
+			return monitors.Count();
+		}, [&](vint index)
 		{
 			MONITORINFOEXW info = {};
 			info.cbSize = sizeof(info);
-			CheckPlatformResult(GetMonitorInfoW(monitor, &info), L"GetMonitorInfo");
+			SetLastError(ERROR_SUCCESS);
+			CheckCaptureResult(GetMonitorInfoW(monitors[index], &info), L"GetMonitorInfo");
 			MonitorSnapshot snapshot;
 			snapshot.name = info.szDevice;
 			snapshot.left = info.rcMonitor.left;
@@ -451,15 +529,22 @@ namespace fatfish
 			snapshot.width = info.rcMonitor.right - info.rcMonitor.left;
 			snapshot.height = info.rcMonitor.bottom - info.rcMonitor.top;
 			MonitorBitmap bitmap;
-			CheckPlatformResult(bitmap.screen != nullptr, L"GetDC");
+			SetLastError(ERROR_SUCCESS);
+			bitmap.screen = GetDC(nullptr);
+			CheckCaptureResult(bitmap.screen != nullptr, L"GetDC");
+			SetLastError(ERROR_SUCCESS);
 			bitmap.memory = CreateCompatibleDC(bitmap.screen);
-			CheckPlatformResult(bitmap.memory != nullptr, L"CreateCompatibleDC");
+			CheckCaptureResult(bitmap.memory != nullptr, L"CreateCompatibleDC");
+			SetLastError(ERROR_SUCCESS);
 			bitmap.bitmap = CreateCompatibleBitmap(bitmap.screen, (int)snapshot.width, (int)snapshot.height);
-			CheckPlatformResult(bitmap.bitmap != nullptr, L"CreateCompatibleBitmap");
+			CheckCaptureResult(bitmap.bitmap != nullptr, L"CreateCompatibleBitmap");
+			SetLastError(ERROR_SUCCESS);
 			bitmap.previous = SelectObject(bitmap.memory, bitmap.bitmap);
-			CheckPlatformResult(bitmap.previous != nullptr && bitmap.previous != HGDI_ERROR, L"SelectObject");
-			CheckPlatformResult(BitBlt(bitmap.memory, 0, 0, (int)snapshot.width, (int)snapshot.height, bitmap.screen, (int)snapshot.left, (int)snapshot.top, SRCCOPY | CAPTUREBLT), L"BitBlt");
-			CheckPlatformResult(SelectObject(bitmap.memory, bitmap.previous) == bitmap.bitmap, L"SelectObject(restore)");
+			CheckCaptureResult(bitmap.previous != nullptr && bitmap.previous != HGDI_ERROR, L"SelectObject");
+			SetLastError(ERROR_SUCCESS);
+			CheckCaptureResult(BitBlt(bitmap.memory, 0, 0, (int)snapshot.width, (int)snapshot.height, bitmap.screen, (int)snapshot.left, (int)snapshot.top, SRCCOPY | CAPTUREBLT), L"BitBlt");
+			SetLastError(ERROR_SUCCESS);
+			CheckCaptureResult(SelectObject(bitmap.memory, bitmap.previous) == bitmap.bitmap, L"SelectObject(restore)");
 			bitmap.previous = nullptr;
 
 			IWICBitmap* sourceRaw = nullptr;
@@ -508,7 +593,7 @@ namespace fatfish
 			base64.SeekFromBegin(0);
 			stream::StreamReader reader(base64);
 			snapshot.dataUrl = L"data:image/png;base64," + reader.ReadToEnd();
-			snapshots.Add(std::move(snapshot));
-		}
+			return snapshot;
+		});
 	}
 }

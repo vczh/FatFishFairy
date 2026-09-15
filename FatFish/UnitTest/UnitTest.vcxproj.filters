@@ -16,6 +16,7 @@
     <ClCompile Include="RuntimeTests.cpp"><Filter>Source Files</Filter></ClCompile>
     <None Include="Invoke.ps1"><Filter>PlatformSmoke</Filter></None>
     <None Include="Invoke-Fairy.ps1"><Filter>PlatformSmoke</Filter></None>
+    <None Include="Invoke-FairyRest.ps1"><Filter>PlatformSmoke</Filter></None>
     <None Include="Server.ps1"><Filter>PlatformSmoke</Filter></None>
   </ItemGroup>
 </Project>

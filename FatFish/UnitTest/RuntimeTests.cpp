@@ -111,6 +111,7 @@ public:
 	Ptr<CancellationToken> cancellation = Ptr(new CancellationToken);
 	List<WString> requests;
 	vint captures = 0;
+	Func<void(List<MonitorSnapshot>&)> captureOverride;
 	WString terminal = LR"({"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":""}}]})";
 	WString observation = LR"({"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","tool_calls":[{"id":"observe","type":"function","function":{"name":"speak","arguments":"{\"text\":\"合成屏幕观察\"}"}}]}}]})";
 
@@ -147,7 +148,11 @@ public:
 	Ptr<FairyApplication> Create(Func<WString(const WString&)> complete, Func<WString()> loadCharacter = {})
 	{
 		return Ptr(new FairyApplication(folder.root / L"state", config, prompts, complete,
-			[this](List<MonitorSnapshot>& snapshots) { Capture(snapshots); },
+			[this](List<MonitorSnapshot>& snapshots)
+			{
+				if (captureOverride) captureOverride(snapshots);
+				else Capture(snapshots);
+			},
 			[](const WString&) -> WebResponse { throw Exception(L"Unexpected network access in worker fixture."); }, cancellation, loadCharacter));
 	}
 
@@ -271,6 +276,278 @@ WString JoinRuntimeProgress(const List<WString>& values)
 
 TEST_FILE
 {
+	TEST_CASE(L"Capture success is announced only for available snapshots and before any vision request")
+	{
+		// Explicitly unavailable, empty result, partial result, and cancellation from the success observer.
+		for (vint scenario = 0; scenario < 4; scenario++)
+		{
+			RuntimeWorkerFixture fixture;
+			List<WString> events;
+			fixture.captureOverride = [&](List<MonitorSnapshot>& snapshots)
+			{
+				TEST_ASSERT(events.Count() == 1 && events[0] == L"V");
+				fixture.captures++;
+				if (scenario == 0) throw ScreenCaptureUnavailable();
+				if (scenario == 1) return;
+				for (vint monitor : { 1, 3 })
+				{
+					MonitorSnapshot snapshot;
+					snapshot.name = L"available-" + itow(monitor);
+					snapshot.width = 10 * monitor;
+					snapshot.height = 20 * monitor;
+					snapshot.dataUrl = L"data:image/png;base64,fixture-" + itow(monitor);
+					snapshots.Add(snapshot);
+				}
+			};
+			auto application = fixture.Create([&](const WString& body)
+			{
+				TEST_ASSERT(scenario == 2 && events.Count() >= 2 && events[1] == L"capture");
+				if (fixture.requests.Count() == 0)
+				{
+					json::Parser parser;
+					auto request = ParseJson(body, parser);
+					auto messages = GetField(request, L"messages").Cast<json::JsonArray>();
+					auto parts = GetField(messages->items[1], L"content").Cast<json::JsonArray>();
+					TEST_ASSERT(GetString(request, L"model") == fixture.config.visionModel && parts->items.Count() == 4);
+					TEST_ASSERT(wcsstr(GetString(parts->items[0], L"text").Buffer(), L"available-1"));
+					TEST_ASSERT(wcsstr(GetString(parts->items[2], L"text").Buffer(), L"available-3"));
+					TEST_ASSERT(GetString(GetField(parts->items[1], L"image_url"), L"url") == L"data:image/png;base64,fixture-1");
+					TEST_ASSERT(GetString(GetField(parts->items[3], L"image_url"), L"url") == L"data:image/png;base64,fixture-3");
+				}
+				return fixture.Complete(body);
+			});
+			application->PhaseChanged.Add(Func<void(AgentPhase)>([&](AgentPhase phase) { events.Add(phase == AgentPhase::Vision ? L"V" : L"F"); }));
+			application->CaptureSucceeded.Add(Func<void()>([&]()
+			{
+				TEST_ASSERT(scenario >= 2 && fixture.captures == 1 && fixture.requests.Count() == 0);
+				events.Add(L"capture");
+				if (scenario == 3) fixture.cancellation->Cancel();
+			}));
+			if (scenario < 2) TEST_EXCEPTION(application->RunRound(), ScreenCaptureUnavailable, [](const ScreenCaptureUnavailable&) {});
+			else if (scenario == 3) TEST_EXCEPTION(application->RunRound(), OperationCancelled, [](const OperationCancelled&) {});
+			else TEST_ASSERT(application->RunRound() == L"第一轮回应");
+			TEST_ASSERT(fixture.captures == 1 && fixture.requests.Count() == (scenario == 2 ? 4 : 0));
+			TEST_ASSERT(JoinRuntimeProgress(events) == (scenario < 2 ? L"V" : scenario == 2 ? L"V,capture,F" : L"V,capture"));
+		}
+	});
+
+	TEST_CASE(L"Desktop rest retries automatically without model or history writes and retains memory across theme changes")
+	{
+		for (bool switchTheme : { false, true })
+		{
+			RuntimeWorkerFixture fixture;
+			EventObject published;
+			TEST_ASSERT(published.CreateAutoUnsignal(false));
+			List<WString> progress;
+			List<WString> results;
+			List<vint> waits;
+			vint saves = 0;
+			vint factoryCalls = 0;
+			vint successfulCaptures = 0;
+			auto memoryFile = fixture.folder.root / L"state" / L"retained.md";
+			auto historyFolder = fixture.folder.root / L"logs";
+			auto historyFile = historyFolder / L"history.md";
+			U8String memoryBeforeRest;
+			U8String historyBeforeRest;
+			fixture.captureOverride = [&](List<MonitorSnapshot>& snapshots)
+			{
+				fixture.captures++;
+				if (fixture.captures >= 2 && fixture.captures <= 4) throw ScreenCaptureUnavailable();
+				MonitorSnapshot snapshot;
+				snapshot.name = L"available-display";
+				snapshot.width = snapshot.height = 1;
+				snapshot.dataUrl = L"data:image/png;base64,fixture";
+				snapshots.Add(snapshot);
+			};
+			auto application = fixture.Create([&](const WString& body)
+			{
+				auto ordinary = fixture.Complete(body);
+				json::Parser parser;
+				auto request = ParseJson(body, parser);
+				auto vision = GetString(request, L"model") == fixture.config.visionModel;
+				TEST_ASSERT(progress.Count() > 0 && progress[progress.Count() - 1] == (vision ? L"V" : L"F"));
+				if (vision) return ordinary;
+				auto messages = GetField(request, L"messages").Cast<json::JsonArray>();
+				if (GetString(messages->items[messages->items.Count() - 1], L"role") == L"user")
+				{
+					if (fixture.captures == 1)
+						return WString(LR"({"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","tool_calls":[{"id":"remember","type":"function","function":{"name":"file_write","arguments":"{\"path\":\"retained.md\",\"content\":\"休息前的长期记忆\"}"}},{"id":"say","type":"function","function":{"name":"speak","arguments":"{\"text\":\"休息前的发言\"}"}}]}}]})");
+					TEST_ASSERT(fixture.captures == 5 && messages->items.Count() == (switchTheme ? 2 : 7));
+					return WString(LR"({"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","tool_calls":[{"id":"recall","type":"function","function":{"name":"file_read","arguments":"{\"path\":\"retained.md\"}"}},{"id":"say","type":"function","function":{"name":"speak","arguments":"{\"text\":\"休息后恢复发言\"}"}}]}}]})");
+				}
+				if (fixture.captures == 5)
+				{
+					auto recall = messages->items[messages->items.Count() - 2];
+					TEST_ASSERT(GetString(recall, L"tool_call_id") == L"recall");
+					TEST_ASSERT(GetString(ParseJson(GetString(recall, L"content"), parser), L"content") == L"休息前的长期记忆");
+				}
+				return fixture.terminal;
+			});
+			application->CaptureSucceeded.Add(Func<void()>([&]() { successfulCaptures++; }));
+			DesktopAgentRunner* activeRunner = nullptr;
+			{
+				DesktopAgentRunner runner([&]()
+				{
+					factoryCalls++;
+					return application;
+				}, fixture.cancellation, [&](const WString& result)
+				{
+					results.Add(result);
+					published.Signal();
+				}, [&](const WString& speech)
+				{
+					saves++;
+					AppendSpeechHistory(historyFolder, speech);
+					if (saves == 1)
+					{
+						memoryBeforeRest = ReadRuntimeFixtureBytes(memoryFile);
+						historyBeforeRest = ReadRuntimeFixtureBytes(historyFile);
+					}
+				}, [&](const WString& label)
+				{
+					if (progress.Count() == 0 || progress[progress.Count() - 1] != label) progress.Add(label);
+				}, [&](vint milliseconds)
+				{
+					waits.Add(milliseconds);
+					TEST_ASSERT(milliseconds == 60000 && waits.Count() <= 3);
+					TEST_ASSERT(progress[progress.Count() - 1] == L"L" && results.Count() == 1 && saves == 1);
+					TEST_ASSERT(fixture.requests.Count() == 4 && successfulCaptures == 1);
+					TEST_ASSERT(ReadRuntimeFixtureBytes(memoryFile) == memoryBeforeRest && ReadRuntimeFixtureBytes(historyFile) == historyBeforeRest);
+					if (switchTheme && waits.Count() == 1) activeRunner->SetCharacterFile(fixture.folder.root / L"theme-b" / L"Character.md");
+					return false;
+				});
+				activeRunner = &runner;
+				runner.SetCharacterFile(fixture.folder.root / L"theme-a" / L"Character.md");
+				TEST_ASSERT(runner.Start());
+				auto beforeRest = published.WaitForTime(5000);
+				runner.RequestRound();
+				// Unavailable captures never publish a result, so retries need no UI acknowledgements.
+				auto afterRest = published.WaitForTime(5000);
+				runner.StopAndWait();
+				TEST_ASSERT(beforeRest && afterRest);
+			}
+			TEST_ASSERT(factoryCalls == 1 && fixture.captures == 5 && successfulCaptures == 2 && fixture.requests.Count() == 8);
+			TEST_ASSERT(waits.Count() == 3 && saves == 2 && results.Count() == 2);
+			TEST_ASSERT(results[0] == L"休息前的发言" && results[1] == L"休息后恢复发言");
+			TEST_ASSERT(JoinRuntimeProgress(progress) == L"V,F,V,L,V,F");
+			TEST_ASSERT(ReadRuntimeFixtureBytes(memoryFile) == memoryBeforeRest);
+			TEST_ASSERT(ReadRuntimeFixtureBytes(historyFile).Length() > historyBeforeRest.Length());
+			// A retained application must no longer call the destroyed worker after capture succeeds.
+			auto countAfterExit = progress.Count();
+			application->CaptureSucceeded();
+			TEST_ASSERT(progress.Count() == countAfterExit);
+		}
+	});
+
+	TEST_CASE(L"Rest preserves prior failure counts and ordinary errors until a captured round succeeds")
+	{
+		RuntimeWorkerFixture fixture;
+		EventObject published;
+		TEST_ASSERT(published.CreateAutoUnsignal(false));
+		List<WString> progress;
+		List<WString> results;
+		List<vint> waits;
+		fixture.captureOverride = [&](List<MonitorSnapshot>& snapshots)
+		{
+			fixture.captures++;
+			if (fixture.captures == 2 || fixture.captures == 4) throw ScreenCaptureUnavailable();
+			if (fixture.captures == 3) throw Exception(L"休息期间的独立截图错误");
+			MonitorSnapshot snapshot;
+			snapshot.name = L"available-display";
+			snapshot.width = snapshot.height = 1;
+			snapshot.dataUrl = L"data:image/png;base64,fixture";
+			snapshots.Add(snapshot);
+		};
+		DesktopAgentRunner runner([&]()
+		{
+			return fixture.Create([&](const WString& body)
+			{
+				json::Parser parser;
+				auto request = ParseJson(body, parser);
+				if (fixture.captures == 1 && GetString(request, L"model") == fixture.config.fairyModel) throw Exception(L"休息前的请求错误");
+				return fixture.Complete(body);
+			});
+		}, fixture.cancellation, [&](const WString& result)
+		{
+			results.Add(result);
+			published.Signal();
+		}, {}, [&](const WString& label)
+		{
+			if (progress.Count() == 0 || progress[progress.Count() - 1] != label) progress.Add(label);
+		}, [&](vint milliseconds)
+		{
+			waits.Add(milliseconds);
+			TEST_ASSERT(waits.Count() <= 4);
+			TEST_ASSERT(milliseconds == (waits.Count() % 2 == 0 ? 60000 : 1000));
+			TEST_ASSERT(progress[progress.Count() - 1] == (waits.Count() == 1 ? L"F1" : L"L"));
+			return false;
+		});
+		TEST_ASSERT(runner.Start());
+		auto priorFailure = published.WaitForTime(5000);
+		runner.RequestRound();
+		auto ordinaryFailureWhileResting = published.WaitForTime(5000);
+		runner.RequestRound();
+		auto recovered = published.WaitForTime(5000);
+		runner.StopAndWait();
+		TEST_ASSERT(priorFailure && ordinaryFailureWhileResting && recovered && fixture.captures == 5);
+		TEST_ASSERT(waits.Count() == 4 && results.Count() == 3 && results[2] == L"第一轮回应");
+		TEST_ASSERT(results[0] == L"调用大模型发生错误：休息前的请求错误" && results[1] == L"调用大模型发生错误：休息期间的独立截图错误");
+		TEST_ASSERT(JoinRuntimeProgress(progress) == L"V,F,F1,V1,L,V2,F2,F");
+		TEST_ASSERT(fixture.requests.Count() == 6);
+	});
+
+	TEST_CASE(L"Rest retry cancellation stops resumption for injected and default sixty-second waits")
+	{
+		// The fake wait can stop directly, cancellation can race its return, or the default wait can be cancelled.
+		for (vint scenario = 0; scenario < 3; scenario++)
+		{
+			RuntimeWorkerFixture fixture;
+			EventObject resting;
+			TEST_ASSERT(resting.CreateAutoUnsignal(false));
+			List<WString> progress;
+			vint publications = 0;
+			vint saves = 0;
+			vint waits = 0;
+			fixture.captureOverride = [&](List<MonitorSnapshot>&)
+			{
+				fixture.captures++;
+				throw ScreenCaptureUnavailable();
+			};
+			Func<bool(vint)> retryWait;
+			if (scenario < 2)
+			{
+				retryWait = [&](vint milliseconds)
+				{
+					TEST_ASSERT(milliseconds == 60000);
+					waits++;
+					if (scenario == 1) fixture.cancellation->Cancel();
+					return scenario == 0;
+				};
+			}
+			DesktopAgentRunner runner([&]() { return fixture.Create(); }, fixture.cancellation,
+				[&](const WString&) { publications++; }, [&](const WString&) { saves++; }, [&](const WString& label)
+				{
+					if (progress.Count() == 0 || progress[progress.Count() - 1] != label) progress.Add(label);
+					if (label == L"L") resting.Signal();
+				}, retryWait);
+			TEST_ASSERT(runner.Start());
+			auto restEntered = resting.WaitForTime(5000);
+			bool stopped;
+			bool defaultWaitPending = true;
+			if (scenario == 2)
+			{
+				defaultWaitPending = !runner.WaitForTime(100);
+				fixture.cancellation->Cancel();
+				stopped = runner.WaitForTime(1000);
+			}
+			else stopped = runner.WaitForTime(1000);
+			runner.StopAndWait();
+			TEST_ASSERT(restEntered && defaultWaitPending && stopped && fixture.captures == 1 && fixture.requests.Count() == 0);
+			TEST_ASSERT(publications == 0 && saves == 0 && waits == (scenario == 2 ? 0 : 1));
+			TEST_ASSERT(JoinRuntimeProgress(progress) == L"V,L");
+		}
+	});
+
 	TEST_CASE(L"Agent progress announces vision before capture and fairy before requests and counts only fairy overflows")
 	{
 		for (vint failure = 0; failure < 3; failure++)

@@ -103,8 +103,10 @@ The directory contains `FatFishFairy.exe`, `FatFishCli.exe`, and `UnitTest.exe`.
 
 - Displays a 384×384 transparent, frameless character window that stays on top.
 - Shows a system balloon saying “Hello, world!” above the window at startup, then automatically captures all monitors, runs the vision model followed by the fairy model, replaces the bubble text with the fairy's speech, and immediately starts the next round.
-- A bold skyblue indicator at the lower-left shows progress: `V` means preparing or running the vision observation, and `F` means the fairy is responding. It keeps the current phase while waiting to retry, with no idle marker.
+- A bold skyblue indicator at the lower-left shows progress: `V` means preparing or running the vision observation, `F` means the fairy is responding, and `L` means resting because the screen is unavailable. It keeps the current phase while waiting to retry an ordinary error.
 - A number after the letter counts failures since the last success; zero is omitted. Each context overflow increments it immediately, even when recovery succeeds, producing states such as `F1` and `F2`. Other errors that fail a round count once. The next round may show `V2`, and switching themes keeps the count. A fully successful round, including a silent one, immediately resets it.
+- When access is denied on every monitor or no active monitors exist, such as when Windows is locked or the monitor session is unavailable, the indicator shows `L` without a number. Rest preserves the current bubble, fairy conversation, memories, and failure count, without model requests or speech-log writes. The background worker automatically retries capture every 60 seconds; exiting cancels the wait immediately.
+- If some monitors remain accessible, successful captures are sent in the original monitor order. Only a fresh successful capture leaves `L`, restoring `V` and `F` with the retained failure count until a complete round succeeds and clears it. If every capture fails and an unrelated error is present, the ordinary error still appears in the bubble, increments the failure count, and retries after one second; an application already resting keeps `L`.
 - The bubble's pointer faces down toward the window's top center and follows the window; its placement adjusts near screen edges to keep it visible. The latest speech stays visible until the next update. When the fairy chooses to remain silent, the bubble clears and hides until there is new text.
 - Each round's complete nonempty speech is appended to `env/history.md`, creating it when needed. Each entry begins with `# Speak YYYY-MM-DD HH-mm-ss`, followed by a blank line and the speech, using local time and UTF-8 encoding. Appending continues after a restart. Git ignores this file; startup greetings, silent results, and errors are excluded. Write failures appear in the bubble and trigger a retry. This log is specific to FatFishFairy.
 - Model configuration or request failures appear in the bubble with the prefix “调用大模型发生错误：” (An error occurred while calling the model), followed by an automatic retry after one second. Correcting missing or invalid model configuration allows initialization to retry.
@@ -204,11 +206,11 @@ Push-Location FatFish
 Pop-Location
 ```
 
-Tests use synthetic model responses and temporary directories without reading real credentials, capturing the screen, or accessing the network. They cover memory file safety, configuration, streaming responses, output formatting, error feedback, multiple model rounds, staged history removal and retries after context overflows, window position, theme order, theme selection and fallback, fresh fairy sessions after theme switching with memories retained, settings persistence, animation sequencing, and speech history appending, timestamps, and write failures. The complete suite should pass, with no memory leaks in Debug builds.
+Tests use synthetic model responses and temporary directories without reading real credentials, capturing the screen, or accessing the network. They cover memory file safety, configuration, streaming responses, output formatting, error feedback, multiple model rounds, staged history removal and retries after context overflows, window position, theme order, theme selection and fallback, fresh fairy sessions after theme switching with memories retained, settings persistence, animation sequencing, and speech history appending, timestamps, and write failures. They also cover partial monitor availability, access denial on every monitor, no active monitors, `L` rest and automatic retries, preserved bubbles and failure counts, theme changes during rest, cancelled waits, and recovery after a successful capture. Simulated waits verify the minute-long retry without waiting a minute. The complete suite should pass, with no memory leaks in Debug builds.
 
 ### Local integration tests
 
-Keep the Windows desktop visible and unlocked during integration tests and real-model verification. If screen capture is denied, for example with `BitBlt failed (Windows error 5)`, check the current desktop session before retrying.
+Keep the Windows desktop visible and unlocked during regular integration tests and real-model verification. If screen capture is denied, for example with `BitBlt failed (Windows error 5)`, check the current desktop session before retrying. The separate locked-desktop rest test below requires the screen to stay locked.
 
 After building the corresponding applications, run these in PowerShell 7:
 
@@ -223,6 +225,18 @@ After building the corresponding applications, run these in PowerShell 7:
 Both integration tests send monitor screenshots only to a local loopback test server. They do not save those screenshots or access a real model service. The CLI test also returns a real HTTP 400 context-limit error and verifies that the fairy retries with its current tool results retained, without repeating tools or speech. The desktop integration test uses temporary application, theme, configuration, and memory directories to check transparency, topmost behavior, animation, balloon tracking, dragging and position restore, theme menu order, saved switching, startup restoration, and fallback for unknown theme keys. When switching themes, it verifies that the current round keeps its original personality and the next round starts with an empty fairy conversation. It also checks continuous model calls, updated and silent speech, error display and recovery, and menu exit while a request is pending. Tests do not read real configuration or credentials. Add `-ScreenshotPath PATH` to save test window, menu, and bubble screenshots for visual checks of the Chinese theme names, selection mark, and complete speech. The actual on-screen capture of long speech ends in `.speech-desktop.png`. The test moves the mouse and restores the pointer afterward.
 
 The desktop integration test also holds model requests pending to check the lower-left indicator's skyblue color, placement, and changes through `F1`, `F2`, `V1`, and the cleared counter after success. With `-ScreenshotPath`, it additionally saves actual-screen `.progress-*.png` crops for visual inspection of the letters and numbers.
+
+### Locked-desktop rest verification
+
+This opt-in test requires the Debug x64 application with its matching PDB and the Windows SDK x64 CDB debugger. Lock Windows manually before running it and keep it locked until the test finishes; the script never locks or unlocks the machine or forces a capture failure. Run in PowerShell 7:
+
+```powershell
+& ./FatFish/UnitTest/Invoke-FairyRest.ps1
+```
+
+Use `-CdbPath PATH` to select the debugger or `-EvidenceDirectory PATH` to select the evidence directory. The test uses isolated temporary configuration and a local loopback listener without reading real credentials. It verifies two real access-denied `BitBlt` attempts about 60 seconds apart, no HTTP requests throughout the test, UI label text that stays at bare `L`, the retained startup greeting, and clean shutdown within two seconds during the next rest.
+
+CDB records the text passed to the actual UI label callback; native `PrintWindow` rendering is also saved when available. These observations and a JSON report are retained under `.artifacts/capture-rest` by default. They are not actual locked-desktop screenshots. Regular on-screen verification is still required after unlocking.
 
 ### Real-model verification
 

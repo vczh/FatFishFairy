@@ -4,6 +4,7 @@
 
 using namespace fatfish;
 using namespace vl;
+using namespace vl::collections;
 using namespace vl::filesystem;
 using namespace vl::glr;
 
@@ -35,8 +36,166 @@ void ExpectCompletionRejection(const Func<void()>& action, bool contextLimit)
 	TEST_ASSERT(rejected);
 }
 
+MonitorSnapshot MakePlatformSnapshot(vint index)
+{
+	MonitorSnapshot snapshot;
+	snapshot.name = L"synthetic-monitor-" + itow(index);
+	snapshot.dataUrl = L"data:image/png;base64,synthetic-" + itow(index);
+	snapshot.left = -1920 + index * 1920;
+	snapshot.top = -120;
+	snapshot.width = 1920;
+	snapshot.height = 1080;
+	return snapshot;
+}
+
 TEST_FILE
 {
+	TEST_CASE(L"Capture aggregation keeps successful monitors in order after denied or unrelated failures")
+	{
+		List<MonitorSnapshot> snapshots;
+		snapshots.Add(MakePlatformSnapshot(99));
+		vint enumerations = 0;
+		vint attempts = 0;
+		CaptureMonitors(snapshots, [&]()
+		{
+			enumerations++;
+			TEST_ASSERT(snapshots.Count() == 0);
+			return 5;
+		}, [&](vint index)
+		{
+			TEST_ASSERT(index == attempts++);
+			if (index == 0 || index == 4) throw MonitorCaptureError(L"BitBlt", ERROR_ACCESS_DENIED);
+			if (index == 2) throw Exception(L"PNG encoding failed.");
+			return MakePlatformSnapshot(index);
+		});
+		TEST_ASSERT(enumerations == 1 && attempts == 5 && snapshots.Count() == 2);
+		for (vint index = 0; index < snapshots.Count(); index++)
+		{
+			auto expected = MakePlatformSnapshot(index * 2 + 1);
+			auto& actual = snapshots[index];
+			TEST_ASSERT(actual.name == expected.name && actual.dataUrl == expected.dataUrl);
+			TEST_ASSERT(actual.left == expected.left && actual.top == expected.top && actual.width == expected.width && actual.height == expected.height);
+		}
+	});
+
+	TEST_CASE(L"Capture aggregation treats no monitors and capture enumeration access denial as unavailable")
+	{
+		List<MonitorSnapshot> snapshots;
+		vint attempts = 0;
+		auto capture = [&](vint index)
+		{
+			attempts++;
+			return MakePlatformSnapshot(index);
+		};
+		snapshots.Add(MakePlatformSnapshot(99));
+		TEST_EXCEPTION(CaptureMonitors(snapshots, []() -> vint { return 0; }, capture), ScreenCaptureUnavailable, [](const ScreenCaptureUnavailable&) {});
+		TEST_ASSERT(snapshots.Count() == 0 && attempts == 0);
+		snapshots.Add(MakePlatformSnapshot(99));
+		TEST_EXCEPTION(CaptureMonitors(snapshots, []() -> vint
+		{
+			throw MonitorCaptureError(L"EnumDisplayMonitors", ERROR_ACCESS_DENIED);
+		}, capture), ScreenCaptureUnavailable, [](const ScreenCaptureUnavailable&) {});
+		TEST_ASSERT(snapshots.Count() == 0 && attempts == 0);
+		snapshots.Add(MakePlatformSnapshot(99));
+		TEST_EXCEPTION(CaptureMonitors(snapshots, []() -> vint
+		{
+			throw MonitorCaptureError(L"EnumDisplayMonitors", ERROR_INVALID_PARAMETER);
+		}, capture), MonitorCaptureError, [](const MonitorCaptureError& error)
+		{
+			TEST_ASSERT(error.ErrorCode() == ERROR_INVALID_PARAMETER && error.Message() == L"EnumDisplayMonitors failed (Windows error 87).");
+		});
+		TEST_ASSERT(snapshots.Count() == 0 && attempts == 0);
+	});
+
+	TEST_CASE(L"All denied monitors become unavailable and a later capture replaces the empty result")
+	{
+		List<MonitorSnapshot> snapshots;
+		snapshots.Add(MakePlatformSnapshot(99));
+		vint attempts = 0;
+		TEST_EXCEPTION(CaptureMonitors(snapshots, []() -> vint { return 3; }, [&](vint) -> MonitorSnapshot
+		{
+			attempts++;
+			throw MonitorCaptureError(L"BitBlt", ERROR_ACCESS_DENIED);
+		}), ScreenCaptureUnavailable, [](const ScreenCaptureUnavailable& error)
+		{
+			TEST_ASSERT(error.Message() == L"No accessible desktop monitors are available to capture.");
+		});
+		TEST_ASSERT(attempts == 3 && snapshots.Count() == 0);
+		CaptureMonitors(snapshots, []() -> vint { return 1; }, [](vint index) { return MakePlatformSnapshot(index); });
+		TEST_ASSERT(snapshots.Count() == 1 && snapshots[0].name == L"synthetic-monitor-0" && snapshots[0].left == -1920);
+	});
+
+	TEST_CASE(L"All failed captures preserve the first unrelated native or encoding error instead of unavailable")
+	{
+		for (vint ordinaryIndex : { 0, 1, 2 })
+		{
+			List<MonitorSnapshot> snapshots;
+			vint attempts = 0;
+			TEST_EXCEPTION(CaptureMonitors(snapshots, []() -> vint { return 4; }, [&](vint index) -> MonitorSnapshot
+			{
+				attempts++;
+				if (index == ordinaryIndex) throw MonitorCaptureError(L"BitBlt", ERROR_INVALID_PARAMETER);
+				if (index == 3) throw Exception(L"Later PNG encoding failure.");
+				throw MonitorCaptureError(L"BitBlt", ERROR_ACCESS_DENIED);
+			}), MonitorCaptureError, [](const MonitorCaptureError& error)
+			{
+				TEST_ASSERT(error.ErrorCode() == ERROR_INVALID_PARAMETER && error.Message() == L"BitBlt failed (Windows error 87).");
+			});
+			TEST_ASSERT(attempts == 4 && snapshots.Count() == 0);
+		}
+		List<MonitorSnapshot> snapshots;
+		vint attempts = 0;
+		TEST_EXCEPTION(CaptureMonitors(snapshots, []() -> vint { return 3; }, [&](vint index) -> MonitorSnapshot
+		{
+			attempts++;
+			if (index == 0) throw Exception(L"PNG encoding failed.");
+			throw MonitorCaptureError(L"BitBlt", index == 1 ? ERROR_ACCESS_DENIED : ERROR_INVALID_PARAMETER);
+		}), Exception, [](const Exception& error)
+		{
+			TEST_ASSERT(error.Message() == L"PNG encoding failed.");
+		});
+		TEST_ASSERT(attempts == 3 && snapshots.Count() == 0);
+	});
+
+	TEST_CASE(L"Capture unavailability depends on a captured native error code instead of error text")
+	{
+		List<MonitorSnapshot> snapshots;
+		TEST_EXCEPTION(CaptureMonitors(snapshots, []() -> vint { return 1; }, [](vint) -> MonitorSnapshot
+		{
+			throw Exception(L"BitBlt failed (Windows error 5).");
+		}), Exception, [](const Exception& error)
+		{
+			TEST_ASSERT(error.Message() == L"BitBlt failed (Windows error 5).");
+		});
+		TEST_EXCEPTION(CaptureMonitors(snapshots, []() -> vint { return 1; }, [](vint) -> MonitorSnapshot
+		{
+			throw MonitorCaptureError(L"BitBlt failed (Windows error 5)", ERROR_INVALID_PARAMETER);
+		}), MonitorCaptureError, [](const MonitorCaptureError& error)
+		{
+			TEST_ASSERT(error.ErrorCode() == ERROR_INVALID_PARAMETER);
+		});
+	});
+
+	TEST_CASE(L"Cancellation during enumeration or after a successful monitor propagates without further capture")
+	{
+		List<MonitorSnapshot> snapshots;
+		snapshots.Add(MakePlatformSnapshot(99));
+		vint attempts = 0;
+		TEST_EXCEPTION(CaptureMonitors(snapshots, []() -> vint { throw OperationCancelled(); }, [&](vint index)
+		{
+			attempts++;
+			return MakePlatformSnapshot(index);
+		}), OperationCancelled, [](const OperationCancelled&) {});
+		TEST_ASSERT(snapshots.Count() == 0 && attempts == 0);
+		TEST_EXCEPTION(CaptureMonitors(snapshots, []() -> vint { return 3; }, [&](vint index)
+		{
+			attempts++;
+			if (index == 1) throw OperationCancelled();
+			return MakePlatformSnapshot(index);
+		}), OperationCancelled, [](const OperationCancelled&) {});
+		TEST_ASSERT(attempts == 2 && snapshots.Count() == 1 && snapshots[0].name == L"synthetic-monitor-0");
+	});
+
 	TEST_CASE(L"JSON and streaming server errors classify recognized context overflows without exposing response text")
 	{
 		json::Parser parser;

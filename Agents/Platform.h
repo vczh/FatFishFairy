@@ -12,6 +12,24 @@ namespace fatfish
 								OperationCancelled();
 	};
 
+	// No monitor could be captured because desktop access was denied or none are active.
+	class ScreenCaptureUnavailable : public vl::Exception
+	{
+	public:
+								ScreenCaptureUnavailable();
+	};
+
+	// Only capture APIs throw this type; HTTP and model errors are not desktop state.
+	class MonitorCaptureError : public vl::Exception
+	{
+	private:
+		vl::vuint32_t			errorCode;
+
+	public:
+								MonitorCaptureError(const vl::WString& operation, vl::vuint32_t code);
+		vl::vuint32_t			ErrorCode() const;
+	};
+
 	// Shared by the desktop UI and its worker. Cancellation stays signaled permanently.
 	class CancellationToken : public vl::Object
 	{
@@ -59,6 +77,13 @@ namespace fatfish
 	extern vl::WString PostChatCompletion(const ApiConfig& config, const vl::WString& body, vl::Ptr<CancellationToken> cancellation = nullptr);
 	extern WebResponse HttpGet(const vl::WString& url, vl::vint maxCharacters = 20000, vl::Ptr<CancellationToken> cancellation = nullptr);
 	extern void CaptureMonitors(vl::collections::List<MonitorSnapshot>& snapshots);
+	// Clear previous output and retain successful monitors in enumeration order.
+	// Inject enumeration/capture to exercise the same aggregation without desktop I/O.
+	// Access denial on every monitor or no active monitors throws ScreenCaptureUnavailable;
+	// otherwise all-failed capture rethrows the first unrelated error. Cancellation propagates.
+	extern void CaptureMonitors(vl::collections::List<MonitorSnapshot>& snapshots,
+		const vl::Func<vl::vint()>& enumerateMonitors,
+		const vl::Func<MonitorSnapshot(vl::vint)>& captureMonitor);
 }
 
 #endif

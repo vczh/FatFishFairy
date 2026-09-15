@@ -317,7 +317,9 @@ namespace fatfish
 		List<MonitorSnapshot> snapshots;
 		capture(snapshots);
 		if (cancellation) cancellation->ThrowIfCancelled();
-		if (snapshots.Count() == 0) throw Exception(L"No monitors were captured.");
+		if (snapshots.Count() == 0) throw ScreenCaptureUnavailable();
+		CaptureSucceeded();
+		if (cancellation) cancellation->ThrowIfCancelled();
 		auto parts = Ptr(new json::JsonArray);
 		for (auto&& snapshot : snapshots)
 		{
@@ -398,13 +400,17 @@ namespace fatfish
 	}
 
 	DesktopAgentRunner::DesktopAgentRunner(Func<Ptr<FairyApplication>()> factory, Ptr<CancellationToken> cancellationToken,
-		Func<void(const WString&)> publishResult, Func<void(const WString&)> saveSpeech, Func<void(const WString&)> progress)
+		Func<void(const WString&)> publishResult, Func<void(const WString&)> saveSpeech, Func<void(const WString&)> progress,
+		Func<bool(vint)> retryWait)
 		: createApplication(factory)
 		, publish(publishResult)
 		, persistSpeech(saveSpeech)
 		, reportProgress(progress)
+		, waitForRetry(retryWait)
 		, cancellation(cancellationToken)
 	{
+		if (!waitForRetry)
+			waitForRetry = [cancellationToken](vint milliseconds) { return cancellationToken->Event().WaitForTime(milliseconds); };
 		CHECK_ERROR(nextRound.CreateAutoUnsignal(true), L"DesktopAgentRunner#Cannot create round event.");
 	}
 
@@ -412,13 +418,14 @@ namespace fatfish
 	{
 		Ptr<FairyApplication> application;
 		auto phase = AgentPhase::Vision;
+		bool captureUnavailable = false;
 		vint failures = 0;
 		WString previousProgress;
 		auto notifyProgress = [&]
 		{
 			if (cancellation->IsCancelled()) return;
-			auto text = WString(phase == AgentPhase::Vision ? L"V" : L"F");
-			if (failures > 0) text += itow(failures);
+			auto text = WString(captureUnavailable ? L"L" : phase == AgentPhase::Vision ? L"V" : L"F");
+			if (!captureUnavailable && failures > 0) text += itow(failures);
 			if (text == previousProgress) return;
 			previousProgress = text;
 			if (reportProgress) reportProgress(text);
@@ -428,13 +435,14 @@ namespace fatfish
 		struct ProgressHandlers
 		{
 			FairyApplication*       application = nullptr;
-			Ptr<EventHandler>       phase, overflow;
+			Ptr<EventHandler>       phase, captured, overflow;
 
 			~ProgressHandlers()
 			{
 				if (application)
 				{
 					application->PhaseChanged.Remove(phase);
+					application->CaptureSucceeded.Remove(captured);
 					application->ContextOverflow.Remove(overflow);
 				}
 			}
@@ -473,6 +481,11 @@ namespace fatfish
 						failures++;
 						notifyProgress();
 					}));
+					handlers.captured = application->CaptureSucceeded.Add(Func<void()>([&]
+					{
+						captureUnavailable = false;
+						notifyProgress();
+					}));
 				}
 				if (resetSession) application->ResetFairySession();
 				result = application->RunRound();
@@ -482,6 +495,17 @@ namespace fatfish
 			catch (const OperationCancelled&)
 			{
 				return;
+			}
+			catch (const ScreenCaptureUnavailable&)
+			{
+				if (cancellation->IsCancelled()) return;
+				captureUnavailable = true;
+				notifyProgress();
+				if (cancellation->IsCancelled() || waitForRetry(60000)) return;
+				if (cancellation->IsCancelled()) return;
+				// No round result was published, so schedule the next capture ourselves.
+				nextRound.Signal();
+				continue;
 			}
 			catch (const FairyContextRecoveryExhausted& error)
 			{
@@ -506,7 +530,7 @@ namespace fatfish
 			if (cancellation->IsCancelled()) return;
 			publish(result);
 			// A persistent configuration/network error should not spin or flood requests.
-			if (failed && cancellation->Event().WaitForTime(1000)) return;
+			if (failed && waitForRetry(1000)) return;
 		}
 	}
 

@@ -51,6 +51,8 @@ namespace fatfish
 		vl::Event<void(bool, const vl::WString&)>         ResponseReceived;
 		// Synchronous notifications on the round's owning thread, before work/recovery.
 		vl::Event<void(AgentPhase)>                     PhaseChanged;
+		// At least one fresh monitor image is available, before submitting vision.
+		vl::Event<void()>                               CaptureSucceeded;
 		// Every fairy context rejection, including the one that exhausts recovery.
 		vl::Event<void()>                               ContextOverflow;
 
@@ -73,7 +75,8 @@ namespace fatfish
 	};
 
 	// Own one application on a worker. The UI requests the next round only
-	// after displaying the previous result. StopAndWait cancels I/O and joins it.
+	// after displaying the previous result. Unavailable captures retry on the worker.
+	// StopAndWait cancels I/O or retry waits and joins it.
 	class DesktopAgentRunner : public vl::Thread
 	{
 	private:
@@ -81,6 +84,7 @@ namespace fatfish
 		vl::Func<void(const vl::WString&)>               publish;
 		vl::Func<void(const vl::WString&)>               persistSpeech;
 		vl::Func<void(const vl::WString&)>               reportProgress;
+		vl::Func<bool(vl::vint)>                         waitForRetry;
 		vl::Ptr<CancellationToken>                      cancellation;
 		vl::EventObject                                nextRound;
 		vl::SpinLock                                   lockCharacter;
@@ -95,16 +99,18 @@ namespace fatfish
 		void                                            Run() override;
 
 	public:
-		// Progress is reported on the worker as V/F plus consecutive failures (zero omitted).
+		// Progress is V/F plus consecutive failures (zero omitted), or bare L while capture is unavailable.
 		                                                DesktopAgentRunner(const vl::filesystem::FilePath& envFolder, const vl::filesystem::FilePath& memoryFolder,
 		                                                    const vl::filesystem::FilePath& initialCharacterFile, const vl::filesystem::FilePath& fallbackFile,
 		                                                    vl::Func<void(const vl::WString&)> publishResult,
 		                                                    vl::Func<void(const vl::WString&)> progress = {});
-		// Inject a factory to test the actual worker with offline model responses.
+		// Inject I/O and retry waiting for offline tests. retryWait receives milliseconds;
+		// true stops the worker. By default, wait on cancellation without blocking the UI.
 		                                                DesktopAgentRunner(vl::Func<vl::Ptr<FairyApplication>()> factory,
 		                                                    vl::Ptr<CancellationToken> cancellationToken, vl::Func<void(const vl::WString&)> publishResult,
 		                                                    vl::Func<void(const vl::WString&)> saveSpeech = {},
-		                                                    vl::Func<void(const vl::WString&)> progress = {});
+		                                                    vl::Func<void(const vl::WString&)> progress = {},
+		                                                    vl::Func<bool(vl::vint)> retryWait = {});
 		                                                ~DesktopAgentRunner();
 		// Finish the current round, then use this character with a fresh fairy session.
 		// Selecting the same file does not reset; saved memories are retained.

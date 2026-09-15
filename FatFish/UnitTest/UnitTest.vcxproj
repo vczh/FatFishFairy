@@ -46,6 +46,7 @@
     <ClCompile Include="RuntimeTests.cpp" />
     <None Include="Invoke.ps1" />
     <None Include="Invoke-Fairy.ps1" />
+    <None Include="Invoke-FairyRest.ps1" />
     <None Include="Server.ps1" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
