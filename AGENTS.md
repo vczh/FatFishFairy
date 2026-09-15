@@ -213,8 +213,7 @@ The background should be #00FF00 so that when a png renders on it, the backgroun
 ### Behavior
 
 The main window is always top-most.
-On startup, show `Hello, world!` in a native Win32 tracking balloon tooltip (`TOOLTIPS_CLASSW`, `TTS_BALLOON`, `TTF_TRACK`) just above the window, with its stem pointing down at the window's top center. Keep it visible until the window closes and update its screen position from the GacUI `Moved()` callback, calling the base implementation first. Create and activate it when `WindowOpened` fires. Windows chooses stem direction automatically: use `TTM_TRACKPOSITION` at a point inside the related monitor's bottom edge to obtain its above-target layout, then measure the complete window with `GetWindowRect` and the stem's horizontal offset from that target. Cache the layout target to avoid moving the tooltip back to the monitor edge during ordinary dragging; use `SetWindowPos` to move the complete native shape above the fairy and clamp it to the monitor's work area. Use the first screen if the fairy is wholly off-screen. Do not use `TTF_ABSOLUTE`, which leaves the stem pointing upward when the whole balloon is placed above the fairy. Own and destroy its `HWND` in `FairyDesktopWindow`. The executable opts into common controls v6 for system visual styles and the current `TOOLINFO` layout. Do not use a polling timer for bubble positioning. The desktop integration test must inspect the balloon's native window region to verify its downward stem and target, as window bounds alone cannot detect a reversed pointer.
-Dragging the main window using left button moves the window. Remember the local cursor position on left `mouseDown`; on `mouseMove`, move the current native bounds by the converted difference from that fixed anchor. GacUI handles capture automatically. Save the position on left `mouseUp`; do not initiate native caption dragging or manage capture manually.
+Dragging the main window using left button moves the window and the talking bubble. Remember the local cursor position on left `mouseDown`; on `mouseMove`, move the current native bounds by the converted difference from that fixed anchor. GacUI handles capture automatically. Save the position on left `mouseUp`; do not initiate native caption dragging or manage capture manually.
 Right click the main window shows a menu organized as below:
 - `主题`: A menu placeholder defined in `UI/Resource.xml`; C++ creates and populates its submenu after loading the theme catalog:
   - List every theme in `themes/theme.json` order, using its Chinese display name instead of its folder key. Check the current theme's menu item.
@@ -235,9 +234,19 @@ Define the named `contextMenu` ToolstripMenu component, its theme placeholder an
 This file defines the initial location and selected theme of the main window. Save the location when dragging stops and save the theme when it changes, so both are restored at the next startup.
 `config.json` is ignored by Git. Missing files or missing coordinates default to zero; dragging or switching themes creates the file as needed. Shared configuration persistence updates only the requested fields, preserving the other setting and unrelated fields. Coordinates are signed 32-bit desktop coordinates, including negative positions on other monitors. Malformed configuration, non-string `selectedTheme` values and missing or invalid theme frames fail explicitly.
 
+### Talking Bubble
+
+<!-- this part is moved from the original place without modifying, to give the bubble a name "talking bubble", just FYI, delete this comment -->
+
+On startup, show `Hello, world!` in a native Win32 tracking balloon tooltip (`TOOLTIPS_CLASSW`, `TTS_BALLOON`, `TTF_TRACK`) just above the window, with its stem pointing down at the window's top center. Keep it visible until the window closes and update its screen position from the GacUI `Moved()` callback, calling the base implementation first. Create and activate it when `WindowOpened` fires. Windows chooses stem direction automatically: use `TTM_TRACKPOSITION` at a point inside the related monitor's bottom edge to obtain its above-target layout, then measure the complete window with `GetWindowRect` and the stem's horizontal offset from that target. Cache the layout target to avoid moving the tooltip back to the monitor edge during ordinary dragging; use `SetWindowPos` to move the complete native shape above the fairy and clamp it to the monitor's work area. Use the first screen if the fairy is wholly off-screen. Do not use `TTF_ABSOLUTE`, which leaves the stem pointing upward when the whole balloon is placed above the fairy. Own and destroy its `HWND` in `FairyDesktopWindow`. The executable opts into common controls v6 for system visual styles and the current `TOOLINFO` layout. Do not use a polling timer for bubble positioning. The desktop integration test must inspect the balloon's native window region to verify its downward stem and target, as window bounds alone cannot detect a reversed pointer.
+
 ### Executing Agents
 
-(non goal for now)
+`FatFishFairy` behaves like user keep pressing `ENTER` on `FatFishCli`:
+- When the app starts up, it runs the vision-fairy-speak loop immediately.
+- After collecting speak from the fairy agent, the text is updated to the bubble used to display `Hello, world!`.
+- And then immediately starts the next loop until the app exits.
+- When any error happens during accessing agents, update the error message to the bubble instead of throwing an exception, begins with "调用大模型发生错误：".
 
 ### Playing Animation
 
