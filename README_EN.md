@@ -114,12 +114,15 @@ The directory contains `FatFishFairy.exe`, `FatFishCli.exe`, and `UnitTest.exe`.
 - The fairy's personality comes from `themes/<current-theme>/Character.md`, falling back to `themes/loli_maid/Character.md` when that file is absent. Switching to another theme discards the previous fairy conversation and starts a fresh session with the new theme on the next round, preserving memories in `memory` and the speech log. A round already in progress keeps the theme it started with and may still speak with the previous personality when it finishes. Selecting the current theme again does not reset the session.
 - Picks an animation at random from the current theme and plays its complete sequence three times at one frame per second before randomly choosing the next animation.
 
-Two included themes provide 20 animations with 70 frames in total. Switch between them through the right-click menu:
+Three included themes provide 30 animations with 100 frames in total. Switch between them through the right-click menu:
 
 - **萝莉小妹抖** (Chibi Maid): a chibi character with 10 animations and 34 frames, featuring coffee, homework, manga, sleeping, playing, programming, drawing, and transformation into a whale.
 - **长大的妹抖** (Grown Maid): a character with normal adult proportions, with 10 animations and 36 frames, featuring coffee, phone browsing, sleeping, programming, drawing, teaching, and transformations into a whale-armored warrior and a whale sailor outfit.
+- **纳垢灵** (Nurgling): a green chibi creature with two horns and a second, large mouth on its belly, with 10 animations and 30 frames, featuring gardening, stirring a cauldron, ringing a bell, playing with flies and mushrooms, snacking, dancing, sleeping, programming, and giving a gift.
 
 Chibi Maid uses the original food-loving, work-shy, teasing tsundere personality in `themes/loli_maid/Character.md`. Grown Maid uses the independent personality in `themes/grown_maid/Character.md`: a knowledgeable, gentle and thoughtful maid with an older-sister manner who often shows concern and encouragement, with a slightly exaggerated anime-style delivery. She refers to herself only as “我” (I) and addresses the user only as “主人” (Master), without inventing nicknames. Select “主题 → 长大的妹抖” (Theme → Grown Maid) in the right-click menu to use it.
+
+Select “主题 → 纳垢灵” (Theme → Nurgling) in the right-click menu to use the independent personality in `themes/nurgling/Character.md`: a mischievous garden playmate that enjoys mushrooms, bubbles, and little pranks, and keeps the user company in lively Chinese. It is a cute desktop adaptation of a Warhammer 40,000 Nurgling.
 
 `env/Character.md` is no longer used. An existing personality file that is empty or unreadable causes an error; the desktop application retries after the file is corrected.
 
