@@ -41,13 +41,13 @@ FatFishFairy会随机选择当前主题的一个动画系列，每1秒一帧，�
 
 参考形象为DeepSeek蓝色大肥鱼的成年版本，身穿女仆装，白丝绝对领域，衣服上有有DeepSeek logo，自带鲸鱼尾巴，所有的内容都应该是可爱但是正常尺寸。
 
-- [ ] coffee: 跪坐在桌子旁边喝手冲咖啡。
-- [ ] espresso: puck prep x2 -> 使用decent espresso浓缩咖啡机制作拿铁 x3。
-- [ ] latte_art: 拿铁拉花。
-- [ ] reading_phone: 躺在沙发上刷手机看短视频，手机背后有蓝色大肥鱼的大头萝莉女仆形象。
-- [ ] sleeping: 在床上睡觉。
-- [ ] programming: 坐着人体工学椅子在书桌前面编程。
-- [ ] drawing: 使用电子画板在电脑前绘制蓝色大肥鱼自己。
-- [ ] valkyrie: 像圣斗士一样穿上鲸鱼盔甲变成蓝色大肥鱼女战士x5。
-- [ ] sailorfish: 像美少女战士一样变身并穿上鲸鱼水手服x5。
-- [ ] teaching: 拿着教棍在白板上给底下坐着的蓝色大肥鱼大头萝莉女仆上课，学生只看到背影。
+- [x] coffee: 跪坐在桌子旁边喝手冲咖啡。
+- [x] espresso: puck prep x2 -> 使用decent espresso浓缩咖啡机制作拿铁 x3。
+- [x] latte_art: 拿铁拉花。
+- [x] reading_phone: 躺在沙发上刷手机看短视频，手机背后有蓝色大肥鱼的大头萝莉女仆形象。
+- [x] sleeping: 在床上睡觉。
+- [x] programming: 坐着人体工学椅子在书桌前面编程。
+- [x] drawing: 使用电子画板在电脑前绘制蓝色大肥鱼自己。
+- [x] valkyrie: 像圣斗士一样穿上鲸鱼盔甲变成蓝色大肥鱼女战士x5。
+- [x] sailorfish: 像美少女战士一样变身并穿上鲸鱼水手服x5。
+- [x] teaching: 拿着教棍在白板上给底下坐着的蓝色大肥鱼大头萝莉女仆上课，学生只看到背影。

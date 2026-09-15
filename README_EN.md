@@ -104,7 +104,10 @@ The directory contains `FatFishFairy.exe`, `FatFishCli.exe`, and `UnitTest.exe`.
 - Switching themes immediately picks an animation from the new theme and starts at its first frame, then saves the choice for the next launch. If no theme has been saved or the saved theme no longer exists, the first theme in the list is used.
 - Picks an animation at random from the current theme and plays its complete sequence three times at one frame per second before randomly choosing the next animation.
 
-The included theme has 10 animations with 34 frames, featuring coffee, homework, manga, sleeping, playing, programming, drawing, and transformation.
+Two included themes provide 20 animations with 70 frames in total. Switch between them through the right-click menu:
+
+- **萝莉小妹抖** (Chibi Maid): a chibi character with 10 animations and 34 frames, featuring coffee, homework, manga, sleeping, playing, programming, drawing, and transformation into a whale.
+- **长大的妹抖** (Grown Maid): a character with normal adult proportions, with 10 animations and 36 frames, featuring coffee, phone browsing, sleeping, programming, drawing, teaching, and transformations into a whale-armored warrior and a whale sailor outfit.
 
 The window position and selected theme are saved in `env/config.json`, which normally needs no manual setup. You can also edit it while the application is closed:
 
