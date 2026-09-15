@@ -94,7 +94,8 @@ In `REPO-ROOT/env` these files are submitted to agents accordingly, in each requ
   - `Guidance.md`
   - `Request_Fairy.md`
   - `Character.md`
-  - Description from the snapshots.
+  - `当前日期时间是：YYYY-MM-DD HH-mm-ss`
+  - `以下是用户所有屏幕的内容：` + Description from the snapshots.
 - The agent will access and maintain memories about anything, especially any interesting stuff about the user, try to summarize and infer what the user like, what the user is usually doing, etc.
 - The agent may choose to say something to the user.
 - Every round runs in the same session.
@@ -168,6 +169,8 @@ You are not recommended to modify this library, but if you really need to:
 - Keep speech accumulation local to each agent's current round. Pass the full vision result to the fairy and return the full fairy result; ordinary assistant text is not part of either result.
 
 ## FatFishCli test app
+
+The CLI window title should be `FatFishCli`.
 
 Accept two keys:
 - `ESC`: exit.
