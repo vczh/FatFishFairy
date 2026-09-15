@@ -133,11 +133,11 @@ public:
 		return LR"({"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","tool_calls":[{"id":"silent","type":"function","function":{"name":"speak","arguments":"{\"text\":\"\"}"}}]}}]})";
 	}
 
-	Ptr<FairyApplication> Create(Func<WString(const WString&)> complete)
+	Ptr<FairyApplication> Create(Func<WString(const WString&)> complete, Func<WString()> loadCharacter = {})
 	{
 		return Ptr(new FairyApplication(folder.root / L"state", config, prompts, complete,
 			[this](List<MonitorSnapshot>& snapshots) { Capture(snapshots); },
-			[](const WString&) -> WebResponse { throw Exception(L"Unexpected network access in worker fixture."); }, cancellation));
+			[](const WString&) -> WebResponse { throw Exception(L"Unexpected network access in worker fixture."); }, cancellation, loadCharacter));
 	}
 
 	Ptr<FairyApplication> Create()
@@ -317,27 +317,160 @@ TEST_FILE
 	{
 		RuntimeTestFolder configuration;
 		RuntimeTestFolder storage;
+		RuntimeTestFolder character;
 		auto envFolder = configuration.root / L"custom-prompts";
 		auto memoryFolder = storage.root / L"nested/custom-state";
 		TEST_ASSERT(Folder(envFolder).Create(false));
 		TEST_ASSERT(File(envFolder / L"apikey.json").WriteAllText(
 			LR"({"apikey":"test-secret","url":"https://example.test/v1","auth_header":"Authorization: Bearer $APIKEY","vision_model":"test-vision","fairy_model":"test-fairy"})",
 			false, stream::BomEncoder::Utf8));
-		for (auto name : { L"Tools.md", L"Guidance.md", L"Request_Vision.md", L"Request_Fairy.md", L"Character.md" })
+		for (auto name : { L"Tools.md", L"Guidance.md", L"Request_Vision.md", L"Request_Fairy.md" })
 		{
 			TEST_ASSERT(File(envFolder / name).WriteAllText(L"合成测试提示", false, stream::BomEncoder::Utf8));
 		}
+		auto characterFile = character.root / L"custom-personality.txt";
+		TEST_ASSERT(File(characterFile).WriteAllText(L"独立目录的性格", false, stream::BomEncoder::Utf8));
+		vint characterReads = 0;
+		auto loadCharacter = [&]()
 		{
-			FairyApplication application(envFolder, memoryFolder); // Initialization must not capture the desktop or contact a model.
+			characterReads++;
+			return LoadCharacterPrompt(characterFile, characterFile);
+		};
+		{
+			FairyApplication application(envFolder, memoryFolder, loadCharacter); // Initialization must not capture the desktop or contact a model.
 		}
+		TEST_ASSERT(characterReads == 0 && !File(envFolder / L"Character.md").Exists()); // Character selection belongs to fairy submissions, with no legacy env dependency.
 		TEST_ASSERT(File(memoryFolder / L"Index.md").Exists());
 		TEST_ASSERT(!Folder(configuration.root / L"memory").Exists() && !Folder(storage.root / L"memory").Exists());
 		TEST_ASSERT(!Folder(memoryFolder / L"memory").Exists()); // Use the exact supplied folder without appending a conventional name.
 		TEST_ASSERT(File(envFolder / L"Request_Vision.md").Delete());
-		TEST_EXCEPTION(FairyApplication(envFolder, memoryFolder), Exception, [&](const Exception& error)
+		TEST_EXCEPTION(FairyApplication(envFolder, memoryFolder, loadCharacter), Exception, [&](const Exception& error)
 		{
 			TEST_ASSERT(error.Message() == L"Missing or empty prompt: " + (envFolder / L"Request_Vision.md").GetFullPath());
 		}); // A missing supplied prompt must fail instead of searching for the repository's real env.
+	});
+
+	TEST_CASE(L"Character loading uses supplied paths and falls back only when the selected file is absent")
+	{
+		RuntimeTestFolder selected;
+		RuntimeTestFolder fallback;
+		auto selectedFile = selected.root / L"selected.txt";
+		auto fallbackFile = fallback.root / L"default.txt";
+		TEST_ASSERT(File(fallbackFile).WriteAllText(L"默认性格", false, stream::BomEncoder::Utf8));
+		TEST_ASSERT(LoadCharacterPrompt(selectedFile, fallbackFile) == L"默认性格");
+		TEST_ASSERT(File(selectedFile).WriteAllText(L"所选性格", true, stream::BomEncoder::Utf16));
+		TEST_ASSERT(LoadCharacterPrompt(selectedFile, fallbackFile) == L"所选性格");
+		TEST_ASSERT(File(fallbackFile).Delete());
+		TEST_ASSERT(LoadCharacterPrompt(selectedFile, fallbackFile) == L"所选性格"); // An existing selection never requires the fallback.
+		TEST_ASSERT(File(fallbackFile).WriteAllText(L"默认性格", false, stream::BomEncoder::Utf8));
+		TEST_ASSERT(File(selectedFile).WriteAllText(L"", false, stream::BomEncoder::Utf8));
+		TEST_EXCEPTION(LoadCharacterPrompt(selectedFile, fallbackFile), Exception, [&](const Exception& error)
+		{
+			TEST_ASSERT(error.Message() == L"Missing or empty prompt: " + selectedFile.GetFullPath());
+		}); // An existing empty selected character is an error, even with a valid fallback.
+		TEST_ASSERT(File(selectedFile).Delete());
+		TEST_ASSERT(File(fallbackFile).WriteAllText(L"", false, stream::BomEncoder::Utf8));
+		TEST_EXCEPTION(LoadCharacterPrompt(selectedFile, fallbackFile), Exception, [&](const Exception& error)
+		{
+			TEST_ASSERT(error.Message() == L"Missing or empty prompt: " + fallbackFile.GetFullPath());
+		});
+		TEST_ASSERT(File(fallbackFile).Delete());
+		TEST_EXCEPTION(LoadCharacterPrompt(selectedFile, fallbackFile), Exception, [&](const Exception& error)
+		{
+			TEST_ASSERT(error.Message() == L"Missing or empty prompt: " + fallbackFile.GetFullPath());
+		});
+	});
+
+	TEST_CASE(L"Every fairy submission uses the latest character while retaining tool feedback and conversation history")
+	{
+		RuntimeWorkerFixture fixture;
+		RuntimeTestFolder character;
+		auto firstFile = character.root / L"first.txt";
+		auto secondFile = character.root / L"second.txt";
+		TEST_ASSERT(File(firstFile).WriteAllText(L"第一种性格", false, stream::BomEncoder::Utf8));
+		TEST_ASSERT(File(secondFile).WriteAllText(L"第二种性格", false, stream::BomEncoder::Utf8));
+		auto selectedFile = firstFile;
+		vint characterReads = 0;
+		vint requestIndex = 0;
+		json::Parser parser;
+		auto application = fixture.Create([&](const WString& body)
+		{
+			auto request = ParseJson(body, parser);
+			auto messages = GetField(request, L"messages").Cast<json::JsonArray>();
+			auto system = GetString(messages->items[0], L"content");
+			if (GetString(request, L"model") == fixture.config.visionModel)
+			{
+				TEST_ASSERT(characterReads == (requestIndex < 4 ? 0 : 2)); // Vision never reads character prompts.
+				TEST_ASSERT(system == L"工具说明\n\n记忆指引\n\n视觉请求");
+				if (requestIndex == 0) selectedFile = secondFile; // A theme change while vision is pending applies to fairy immediately.
+			}
+			else
+			{
+				auto expected = requestIndex == 3 ? L"第一种性格" : L"第二种性格";
+				TEST_ASSERT(system == L"工具说明\n\n记忆指引\n\n精灵请求\n\n" + WString(expected));
+				TEST_ASSERT(characterReads == (requestIndex < 4 ? requestIndex - 1 : requestIndex - 3));
+				if (requestIndex == 2) selectedFile = firstFile; // A change while a fairy response is pending applies to its tool follow-up.
+				if (requestIndex == 3)
+					TEST_ASSERT(messages->items.Count() == 4 && GetString(messages->items[3], L"tool_call_id") == L"answer");
+				if (requestIndex == 6)
+				{
+					TEST_ASSERT(messages->items.Count() == 6);
+					auto firstMessages = GetField(ParseJson(fixture.requests[2], parser), L"messages").Cast<json::JsonArray>();
+					TEST_ASSERT(GetString(messages->items[1], L"content") == GetString(firstMessages->items[1], L"content"));
+					TEST_ASSERT(GetString(messages->items[3], L"tool_call_id") == L"answer");
+				}
+			}
+			requestIndex++;
+			return fixture.Complete(body);
+		}, [&]()
+		{
+			characterReads++;
+			return LoadCharacterPrompt(selectedFile, firstFile);
+		});
+		TEST_ASSERT(application->RunRound() == L"第一轮回应");
+		selectedFile = secondFile; // A later round uses the new character without rebuilding the session.
+		TEST_ASSERT(application->RunRound() == L"");
+		TEST_ASSERT(requestIndex == 8 && characterReads == 4 && fixture.captures == 2);
+	});
+
+	TEST_CASE(L"Desktop worker reports character load failures and recovers without retaining a failed fairy exchange")
+	{
+		RuntimeWorkerFixture fixture;
+		auto characterFile = fixture.folder.root / L"character.txt";
+		TEST_ASSERT(File(characterFile).WriteAllText(L"初始性格", false, stream::BomEncoder::Utf8));
+		EventObject published;
+		TEST_ASSERT(published.CreateAutoUnsignal(false));
+		List<WString> results;
+		vint factoryCalls = 0;
+		DesktopAgentRunner runner([&]()
+		{
+			factoryCalls++;
+			return fixture.Create([&](const WString& body)
+				{
+					auto response = fixture.Complete(body);
+					if (fixture.requests.Count() == 3)
+						TEST_ASSERT(File(characterFile).WriteAllText(L"", false, stream::BomEncoder::Utf8)); // Fail while preparing feedback for the first fairy speak.
+					return response;
+				},
+				[&]() { return LoadCharacterPrompt(characterFile, characterFile); });
+		}, fixture.cancellation, [&](const WString& result)
+		{
+			results.Add(result);
+			published.Signal();
+		});
+		TEST_ASSERT(runner.Start());
+		auto reportedFailure = published.WaitForTime(5000);
+		auto repairedFile = File(characterFile).WriteAllText(L"修复后的性格", false, stream::BomEncoder::Utf8);
+		runner.RequestRound();
+		auto recovered = published.WaitForTime(5000);
+		runner.StopAndWait();
+		TEST_ASSERT(reportedFailure && repairedFile && recovered);
+		TEST_ASSERT(factoryCalls == 1 && fixture.captures == 2 && fixture.requests.Count() == 7);
+		TEST_ASSERT(results.Count() == 2 && results[0] == L"调用大模型发生错误：Missing or empty prompt: " + characterFile.GetFullPath());
+		TEST_ASSERT(results[1] == L"第一轮回应");
+		json::Parser parser;
+		auto messages = GetField(ParseJson(fixture.requests[5], parser), L"messages").Cast<json::JsonArray>();
+		TEST_ASSERT(messages->items.Count() == 2 && GetString(messages->items[0], L"content") == L"工具说明\n\n记忆指引\n\n精灵请求\n\n修复后的性格");
 	});
 
 	TEST_CASE(L"Agent rounds preserve history, report responses and recover from invalid replies")

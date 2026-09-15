@@ -24,9 +24,12 @@ try {
   $probe.Stop()
   $configurationData = @{ apikey = 'synthetic-platform-key'; url = "http://127.0.0.1:$port/v1"; auth_header = 'Authorization: Bearer $APIKEY'; vision_model = 'smoke-vision'; fairy_model = 'smoke-fairy' }
   [IO.File]::WriteAllText((Join-Path $fixture 'env/apikey.json'), ($configurationData | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
-  foreach ($name in @('Tools.md', 'Guidance.md', 'Request_Vision.md', 'Request_Fairy.md', 'Character.md')) {
+  foreach ($name in @('Tools.md', 'Guidance.md', 'Request_Vision.md', 'Request_Fairy.md')) {
     [IO.File]::WriteAllText((Join-Path $fixture "env/$name"), "# 中文测试 $name", [Text.UTF8Encoding]::new($false))
   }
+  [void][IO.Directory]::CreateDirectory((Join-Path $fixture 'themes/loli_maid'))
+  [IO.File]::WriteAllText((Join-Path $fixture 'themes/loli_maid/Character.md'), '# 中文测试 CLI 固定角色', [Text.UTF8Encoding]::new($false))
+  [IO.File]::WriteAllText((Join-Path $fixture 'env/config.json'), '{"selectedTheme":"unrelated_theme"}', [Text.UTF8Encoding]::new($false))
 
   [xml]$settings = if ($hadSettings) { [IO.File]::ReadAllText($projectUser) } else { '<Project ToolsVersion="Current" xmlns="http://schemas.microsoft.com/developer/msbuild/2003" />' }
   $group = $settings.DocumentElement.SelectNodes('*[local-name()="PropertyGroup"]') | Where-Object { $_.GetAttribute('Condition').Contains("$Configuration|$Platform") } | Select-Object -First 1

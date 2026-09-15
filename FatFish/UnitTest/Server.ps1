@@ -109,6 +109,8 @@ try {
       Send-Completion $context @{ choices = @(@{ finish_reason = 'stop'; message = @{ role = 'assistant'; content = '' } }) }
     } elseif ($report.posts -eq 3) {
       Assert-Smoke ($payload.model -eq 'smoke-fairy') 'Third request must use the dedicated fairy model.'
+      $fairySystem = "# 中文测试 Tools.md`n`n# 中文测试 Guidance.md`n`n# 中文测试 Request_Fairy.md`n`n# 中文测试 CLI 固定角色"
+      Assert-Smoke ($payload.messages[0].content -ceq $fairySystem) 'CLI must use the loli_maid character after the shared fairy prompts, regardless of the saved desktop theme.'
       $fairyObservation = $payload.messages[1].content
       Assert-Smoke ($fairyObservation -cmatch '^当前日期时间是：[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}-[0-9]{2}-[0-9]{2}\n以下是用户所有屏幕的内容：\n本地屏幕捕获和 PNG 编码验证通过。$') 'Fairy input lost the timestamp, screen label or complete vision observation.'
       $calls = @(
@@ -119,6 +121,7 @@ try {
       Send-Completion $context @{ choices = @(@{ finish_reason = 'tool_calls'; message = @{ role = 'assistant'; content = $null; tool_calls = $calls } }) }
     } else {
       Assert-Smoke ($payload.model -eq 'smoke-fairy') 'Tool follow-up must use the fairy model.'
+      Assert-Smoke ($payload.messages[0].content -ceq $fairySystem) 'Tool follow-up lost the CLI theme character.'
       Assert-Smoke ($payload.messages[1].content -ceq $fairyObservation) 'Tool follow-up changed the original timestamp or observation.'
       $replies = @($payload.messages | Where-Object role -eq 'tool')
       Assert-Smoke ($replies.Count -eq 3) 'Missing tool replies.'

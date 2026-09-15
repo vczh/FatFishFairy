@@ -93,6 +93,13 @@ try {
       $parts = $null
     }
     if (-not $vision) {
+      $character = switch ($sequence) {
+        { $_ -in @(3, 5) } { $data.firstCharacter }
+        { $_ -in @(4, 8, 9) } { $data.fallbackCharacter }
+        { $_ -in @(13, 14) } { $data.secondCharacter }
+      }
+      $expectedSystem = "# 中文桌面测试 Tools.md`n`n# 中文桌面测试 Guidance.md`n`n# 中文桌面测试 Request_Fairy.md`n`n" + $character
+      Assert-Fixture ($payload.messages[0].content -ceq $expectedSystem) "Incorrect selected-theme character or fallback at request $sequence."
       $userMessages = @($payload.messages | Where-Object role -eq 'user')
       $newObservation = $sequence -in @(3, 8, 13)
       Assert-Fixture ($userMessages.Count -eq ($observations.Count + [int]$newObservation)) 'Fairy conversation history was reset or duplicated.'

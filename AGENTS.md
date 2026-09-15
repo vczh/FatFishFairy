@@ -68,14 +68,15 @@ Request and response format, behavior, other details
 
 ## Agents
 
-In `REPO-ROOT/env` these files are submitted to agents accordingly, in each request submission:
+In `REPO-ROOT/env` these shared prompt files are submitted to agents accordingly, in each request submission:
 - `Tools.md`, describe specification of all tools to all agents.
 - `Guidance.md`, guidance about how to maintain memories based on the file system, including that `Index.md` should be used to index all other files, offering efficient advices.
-- `Character.md`, fixed request to the fairy agent, about its characteristic.
 - `Request_Vision.md`, fixed request to the vision agent.
 - `Request_Fairy.md`, fixed request to the fairy agent.
 
-**IMPORTANT**: All files listed here should be in Chinese. Except `Character.md`, all files could be modified during development.
+The fairy's character prompt is stored in `REPO-ROOT/themes/<theme>/Character.md`. The original prompt is preserved in `themes/loli_maid/Character.md`; `env/Character.md` is no longer used.
+
+**IMPORTANT**: All prompt files listed here should be in Chinese. Except `Character.md`, all files could be modified during development.
 
 ### the Vision
 
@@ -89,13 +90,14 @@ In `REPO-ROOT/env` these files are submitted to agents accordingly, in each requ
 
 ### The Fairy
 
-- Requests to the agent should combine these prompt files in `REPO-ROOT/env` in this order:
-  - `Tools.md`
-  - `Guidance.md`
-  - `Request_Fairy.md`
+- Requests to the agent should combine these prompts in this order:
+  - `REPO-ROOT/env/Tools.md`
+  - `REPO-ROOT/env/Guidance.md`
+  - `REPO-ROOT/env/Request_Fairy.md`
   - `Character.md`
     - For `FatFishCli` always use `REPO-ROOT/themes/loli_maid/Character.md`.
     - For `FatFishFairy` use `REPO-ROOT/themes/<current-theme>/Character.md`. If such file does not exist, use the one for `loli_maid`.
+    - Read the current character before each fairy request, including tool-feedback follow-ups. An existing but empty or unreadable character file is an error; fall back only when the selected theme's file is absent.
   - `当前日期时间是：YYYY-MM-DD HH-mm-ss`
   - `以下是用户所有屏幕的内容：` + Description from the snapshots.
 - Use local system time with zero-padded fields and a 24-hour clock. Read it once after the vision agent finishes each round, and store the timestamp and labeled complete observation together in that round's user message. Preserve the original timestamps in conversation history and tool-feedback follow-ups.
@@ -105,9 +107,9 @@ In `REPO-ROOT/env` these files are submitted to agents accordingly, in each requ
 
 ## File Organization
 
-- `env`: files to be loaded.
+- `env`: shared prompts and local model/window configuration.
 - `memory`: the folder for agents to maintain their memory.
-- `themes`: desktop fairy artwork; `theme.json` maps theme folder names to Chinese display names, and each theme's `index.json` maps animation names to frame counts. Keep the supplied `reference.png` as the character reference.
+- `themes`: desktop fairy artwork and per-theme `Character.md` prompts; `theme.json` maps theme folder names to Chinese display names, and each theme's `index.json` maps animation names to frame counts. Keep the supplied `reference.png` as the character reference.
 - `Release`: the submodule to `https://vczh-libraries/Release`.
 - `Agents`: shared feature source files only; no test cases, fixtures, or test runners.
 - `FatFish`:
@@ -164,7 +166,8 @@ You are not recommended to modify this library, but if you really need to:
 - Match `FatFish/Common.props`: executables are in `REPO-ROOT/FatFish/x64/<Configuration>` for x64 and `REPO-ROOT/FatFish/<Configuration>` for Win32. From `vl::filesystem::FilePath(executable).GetFolder()`, use `L"../../../env"` and `L"../../../memory"` for x64, or `L"../../env"` and `L"../../memory"` for Win32, in both Debug and Release. Update this calculation in both apps if the output layout changes.
 - Default folder resolution must depend on the executable location, not the working directory or an upward search for marker files. Any explicit path override (such as CLI `--repo-root PATH`) is also resolved by the UI before passing the two folders to `Agents`.
 - The desktop GUI resolves `env`, `memory` and `themes` using the same executable-relative root calculation as the CLI. Initialize its `FairyApplication` on the background worker after opening the window; configuration or model errors must appear in the talking bubble while the window remains usable.
-- Code in `Agents` must not discover or store the repository root, inspect the executable path, or assume the supplied folders' names, locations or relationship. Load configuration and prompts directly from the supplied environment folder and initialize `MemoryStore` with the exact supplied memory folder. The constructor that injects configuration, prompts and I/O for offline tests only needs the supplied memory folder.
+- Both apps resolve character paths under their executable-relative `themes` folder (or CLI `--repo-root`). Pass an app-owned character provider to `FairyApplication`; the desktop provider reads the currently selected theme safely from the background worker. Shared code may load the supplied character paths but must not derive the themes folder from `env` or `memory`.
+- Code in `Agents` must not discover or store the repository root, inspect the executable path, or assume the supplied folders' names, locations or relationship. Load configuration and shared prompts directly from the supplied environment folder and initialize `MemoryStore` with the exact supplied memory folder. The constructor that injects configuration, prompts and I/O for offline tests only needs the supplied memory folder.
 - All source files about agents and other features should be in the `REPO-ROOT/Agents` folder.
 - Keep test cases and fixtures in `REPO-ROOT/FatFish/UnitTest`, compiled only by the `UnitTest` project. Keep all test PowerShell scripts directly in this folder. Do not expose test runners from feature headers or add a `--self-test` mode to `FatFishCli`.
 - Prompts must require both the vision agent and the fairy agent to call `speak` exactly once per observation request, including all tool-feedback follow-ups. Vision submits its complete nonempty observation; fairy uses an empty `text` when it has nothing to say.
@@ -195,6 +198,7 @@ CONTENT
 - Offline `UnitTest` verification must use synthetic model responses and temporary directories without reading real credentials, capturing the desktop, or making network requests. Cover memory safety, configuration validation, completion streaming, response formatting, error feedback, and multi-round agent execution.
 - Offline verification must cover multiple `speak` calls within one response and across follow-ups for both agents, complete vision-to-fairy forwarding, per-round result isolation, and an empty fairy `speak`.
 - Offline desktop tests must cover theme catalog order, exact-key selection and fallback, invalid selection types, and saving the selected theme without losing coordinates or unrelated configuration fields.
+- Offline character tests must cover selected-theme loading, missing-file fallback to `loli_maid`, invalid existing character files, and character changes between rounds and tool-feedback follow-ups while retaining fairy history. Integration fixtures must provide their own theme character files rather than `env/Character.md`.
 - For platform integration verification, run `REPO-ROOT/FatFish/UnitTest/Invoke.ps1` in PowerShell 7 after building `FatFishCli`. This opt-in test captures the desktop and uses only a local loopback fixture implemented by `Server.ps1` in the same folder.
 - For desktop-window integration, run `FatFish/UnitTest/Invoke-Fairy.ps1` in PowerShell 7. It uses a temporary executable/theme/config/memory layout and a local loopback model fixture, and never copies real credentials. Verify transparency, animation, the startup balloon and its movement, dragging, theme menu order, theme switching and persistence, startup selection and fallback, continuous model rounds, updated and silent speech, error display and recovery, and menu exit during a pending model request. Pass `-ScreenshotPath PATH` to save menu screenshots for visual checks of the Chinese display names and selection mark. It moves the mouse during the test and restores the pointer afterwards.
 - Verification must include 10 consecutive successful `ENTER` rounds in `FatFishCli`, using the configured real models in one running process.
@@ -250,9 +254,7 @@ On startup, show `Hello, world!` in a native Win32 tracking balloon tooltip (`TO
 - Display initialization, capture and model errors that end a round in the bubble with the prefix `调用大模型发生错误：`, instead of letting them escape from the worker. Keep recoverable tool errors in the existing model-feedback path. Retry after one second on failure so repeated errors do not create a tight loop; successful rounds have no added delay. Retry failed initialization so correcting configuration can recover without restarting the window.
 - On exit, stop scheduling rounds, cancel any pending network operation and join the worker before destroying its application or the window. Queued UI callbacks must not access a destroyed window.
 
-Use the `Character.md` of the current selected them when submitting a request to the fairy agent, no need to concern about immediate reacting to user switching to a new theme. Although sometines it would cause misalignment between the selected theme and the speak theme at the moment when it is pushed to the bubble, it is totally fine.
-
-<!-- Move and duplicate the current Character.md to `loli_maid`, delete this comment -->
+Use the selected theme's `Character.md` when submitting each fairy request, with the `loli_maid` fallback described above. Switching themes preserves the fairy session and memory and does not cancel or restart a pending response. That response may still use the previous character when displayed; this is acceptable.
 
 ### Playing Animation
 
@@ -283,3 +285,4 @@ You can write anything in this section during development to make future works m
 - `WaitableObject::WaitAny` requires a non-null `abandoned` output pointer on Windows. For derived `vl::Thread` workers, verify shutdown using the native wait, since `Run()` does not automatically update `GetState()` to `Stopped`.
 - Cancellable Chat Completions use asynchronous WinHTTP internally. Close a pending request only after its initiating API call returns, then wait for `WINHTTP_CALLBACK_STATUS_HANDLE_CLOSING` before releasing callback state or read buffers.
 - `PrintWindow` can truncate painted native tooltip text despite correct stored text and complete on-screen rendering. Check long bubble text with the `.speech-desktop.png` capture from `Invoke-Fairy.ps1 -ScreenshotPath`, as well as text equality and native stem-region assertions.
+- The default character avoids commenting on the fairy itself or repeating comments about an unchanged screen. Use changing, unrelated desktop content during real-model bubble verification so valid silence does not prevent the two visible speech updates.

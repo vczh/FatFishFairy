@@ -12,6 +12,9 @@ namespace fatfish
 		vl::WString tools, guidance, vision, fairy, character;
 	};
 
+	// The UI supplies exact character paths. Only an absent selected file uses the fallback.
+	extern vl::WString                                  LoadCharacterPrompt(const vl::filesystem::FilePath& selectedFile, const vl::filesystem::FilePath& fallbackFile);
+
 	class FairyApplication
 	{
 	private:
@@ -24,6 +27,7 @@ namespace fatfish
 		vl::Func<vl::WString(const vl::WString&)>         complete;
 		vl::Func<void(vl::collections::List<MonitorSnapshot>&)> capture;
 		vl::Func<WebResponse(const vl::WString&)>         fetch;
+		vl::Func<vl::WString()>                          characterProvider;
 		vl::Ptr<CancellationToken>                      cancellation;
 
 		vl::WString                                     RunAgent(bool vision, vl::Ptr<vl::glr::json::JsonArray> history);
@@ -36,13 +40,15 @@ namespace fatfish
 
 		// The UI supplies both folders; neither location nor their relationship is assumed here.
 		                                                FairyApplication(const vl::filesystem::FilePath& envFolder, const vl::filesystem::FilePath& memoryFolder,
+		                                                    vl::Func<vl::WString()> loadCharacter,
 		                                                    vl::Ptr<CancellationToken> cancellationToken = nullptr);
 		// Inject I/O to exercise the actual agent loop without credentials or desktop access.
 		                                                FairyApplication(const vl::filesystem::FilePath& memoryFolder, const ApiConfig& apiConfig, const AgentPrompts& agentPrompts,
 		                                                    vl::Func<vl::WString(const vl::WString&)> completion,
 		                                                    vl::Func<void(vl::collections::List<MonitorSnapshot>&)> snapshots,
 		                                                    vl::Func<WebResponse(const vl::WString&)> httpGet,
-		                                                    vl::Ptr<CancellationToken> cancellationToken = nullptr);
+		                                                    vl::Ptr<CancellationToken> cancellationToken = nullptr,
+		                                                    vl::Func<vl::WString()> loadCharacter = {});
 		// Join each agent's nonempty speak texts in order with newlines, across all tool replies.
 		// Forward the complete vision result to the fairy and return the complete fairy result.
 		vl::WString                                     RunRound();
@@ -57,17 +63,25 @@ namespace fatfish
 		vl::Func<void(const vl::WString&)>               publish;
 		vl::Ptr<CancellationToken>                      cancellation;
 		vl::EventObject                                nextRound;
+		vl::SpinLock                                   lockCharacter;
+		vl::filesystem::FilePath                        characterFile;
+		vl::filesystem::FilePath                        fallbackCharacterFile;
+
+		vl::WString                                     ReadCharacterPrompt();
 
 	protected:
 		void                                            Run() override;
 
 	public:
 		                                                DesktopAgentRunner(const vl::filesystem::FilePath& envFolder, const vl::filesystem::FilePath& memoryFolder,
+		                                                    const vl::filesystem::FilePath& initialCharacterFile, const vl::filesystem::FilePath& fallbackFile,
 		                                                    vl::Func<void(const vl::WString&)> publishResult);
 		// Inject a factory to test the actual worker with offline model responses.
 		                                                DesktopAgentRunner(vl::Func<vl::Ptr<FairyApplication>()> factory,
 		                                                    vl::Ptr<CancellationToken> cancellationToken, vl::Func<void(const vl::WString&)> publishResult);
 		                                                ~DesktopAgentRunner();
+		// Update selection without interrupting the current round or resetting fairy history.
+		void                                            SetCharacterFile(const vl::filesystem::FilePath& selectedFile);
 		void                                            RequestRound();
 		void                                            StopAndWait();
 	};

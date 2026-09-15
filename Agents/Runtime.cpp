@@ -7,6 +7,17 @@ using namespace vl::glr;
 
 namespace fatfish
 {
+	WString LoadCharacterPrompt(const FilePath& selectedFile, const FilePath& fallbackFile)
+	{
+		auto path = File(selectedFile).Exists() ? selectedFile : fallbackFile;
+		WString result;
+		stream::BomEncoder::Encoding encoding;
+		bool containsBom;
+		if (!File(path).ReadAllTextWithEncodingTesting(result, encoding, containsBom) || result.Length() == 0)
+			throw Exception(L"Missing or empty prompt: " + path.GetFullPath());
+		return result;
+	}
+
 	void FairyApplication::Initialize()
 	{
 		fairyHistory = Ptr(new json::JsonArray);
@@ -21,10 +32,12 @@ namespace fatfish
 ])json", parser);
 	}
 
-	FairyApplication::FairyApplication(const FilePath& envFolder, const FilePath& memoryFolder, Ptr<CancellationToken> cancellationToken)
+	FairyApplication::FairyApplication(const FilePath& envFolder, const FilePath& memoryFolder, Func<WString()> loadCharacter, Ptr<CancellationToken> cancellationToken)
 		: memory(memoryFolder)
+		, characterProvider(loadCharacter)
 		, cancellation(cancellationToken)
 	{
+		if (!characterProvider) throw Exception(L"A character prompt provider is required.");
 		config = LoadApiConfig(envFolder, parser);
 		auto read = [&](const WString& name)
 		{
@@ -39,7 +52,6 @@ namespace fatfish
 		prompts.guidance = read(L"Guidance.md");
 		prompts.vision = read(L"Request_Vision.md");
 		prompts.fairy = read(L"Request_Fairy.md");
-		prompts.character = read(L"Character.md");
 		complete = [this](const WString& body) { return PostChatCompletion(config, body, cancellation); };
 		capture = [](List<MonitorSnapshot>& snapshots) { CaptureMonitors(snapshots); };
 		fetch = [this](const WString& url) { return HttpGet(url, 20000, cancellation); };
@@ -48,13 +60,14 @@ namespace fatfish
 
 	FairyApplication::FairyApplication(const FilePath& memoryFolder, const ApiConfig& apiConfig, const AgentPrompts& agentPrompts,
 		Func<WString(const WString&)> completion, Func<void(List<MonitorSnapshot>&)> snapshots, Func<WebResponse(const WString&)> httpGet,
-		Ptr<CancellationToken> cancellationToken)
+		Ptr<CancellationToken> cancellationToken, Func<WString()> loadCharacter)
 		: config(apiConfig)
 		, memory(memoryFolder)
 		, prompts(agentPrompts)
 		, complete(completion)
 		, capture(snapshots)
 		, fetch(httpGet)
+		, characterProvider(loadCharacter)
 		, cancellation(cancellationToken)
 	{
 		Initialize();
@@ -190,8 +203,15 @@ namespace fatfish
 		for (vint step = 0; step < 24; step++)
 		{
 			if (cancellation) cancellation->ThrowIfCancelled();
+			WString character;
+			if (!vision)
+			{
+				// Read the current selection for every fairy submission, including tool feedback.
+				character = characterProvider ? characterProvider() : prompts.character;
+				if (character.Length() == 0) throw Exception(L"The character prompt is empty.");
+			}
 			auto messages = Ptr(new json::JsonArray);
-			auto system = prompts.tools + L"\n\n" + prompts.guidance + L"\n\n" + (vision ? prompts.vision : prompts.fairy + L"\n\n" + prompts.character);
+			auto system = prompts.tools + L"\n\n" + prompts.guidance + L"\n\n" + (vision ? prompts.vision : prompts.fairy + L"\n\n" + character);
 			messages->items.Add(TextMessage(L"system", system));
 			CopyFrom(messages->items, history->items, true);
 			auto request = Ptr(new json::JsonObject);
@@ -299,13 +319,35 @@ namespace fatfish
 		}
 	}
 
-	DesktopAgentRunner::DesktopAgentRunner(const FilePath& envFolder, const FilePath& memoryFolder, Func<void(const WString&)> publishResult)
+	DesktopAgentRunner::DesktopAgentRunner(const FilePath& envFolder, const FilePath& memoryFolder,
+		const FilePath& initialCharacterFile, const FilePath& fallbackFile, Func<void(const WString&)> publishResult)
 		: DesktopAgentRunner({}, Ptr(new CancellationToken), publishResult)
 	{
+		characterFile = initialCharacterFile;
+		fallbackCharacterFile = fallbackFile;
 		createApplication = [this, envFolder, memoryFolder]()
 		{
-			return Ptr(new FairyApplication(envFolder, memoryFolder, cancellation));
+			return Ptr(new FairyApplication(envFolder, memoryFolder, [this]() { return ReadCharacterPrompt(); }, cancellation));
 		};
+	}
+
+	WString DesktopAgentRunner::ReadCharacterPrompt()
+	{
+		FilePath selectedFile;
+		SPIN_LOCK(lockCharacter)
+		{
+			selectedFile = characterFile;
+		}
+		// File I/O stays outside the selection lock so the UI can continue switching themes.
+		return LoadCharacterPrompt(selectedFile, fallbackCharacterFile);
+	}
+
+	void DesktopAgentRunner::SetCharacterFile(const FilePath& selectedFile)
+	{
+		SPIN_LOCK(lockCharacter)
+		{
+			characterFile = selectedFile;
+		}
 	}
 
 	DesktopAgentRunner::DesktopAgentRunner(Func<Ptr<FairyApplication>()> factory, Ptr<CancellationToken> cancellationToken, Func<void(const WString&)> publishResult)

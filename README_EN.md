@@ -104,12 +104,15 @@ The directory contains `FatFishFairy.exe`, `FatFishCli.exe`, and `UnitTest.exe`.
 - Hold the left mouse button on the character to drag it. Releasing the button saves its position, which is restored on the next launch.
 - Right-click to open the menu, switch character themes in the “主题” (Theme) submenu, or select “退出” (Exit) to close the application. Themes appear by their Chinese display names in `themes/theme.json` order, with a check beside the current theme.
 - Switching themes immediately picks an animation from the new theme and starts at its first frame, then saves the choice for the next launch. If no theme has been saved or the saved theme no longer exists, the first theme in the list is used.
+- The fairy's personality comes from `themes/<current-theme>/Character.md`, falling back to `themes/loli_maid/Character.md` when that file is absent. The current theme's personality is read before each fairy request. Switching themes preserves the conversation and memories; a request already in progress may still speak with the previous personality.
 - Picks an animation at random from the current theme and plays its complete sequence three times at one frame per second before randomly choosing the next animation.
 
 Two included themes provide 20 animations with 70 frames in total. Switch between them through the right-click menu:
 
 - **萝莉小妹抖** (Chibi Maid): a chibi character with 10 animations and 34 frames, featuring coffee, homework, manga, sleeping, playing, programming, drawing, and transformation into a whale.
 - **长大的妹抖** (Grown Maid): a character with normal adult proportions, with 10 animations and 36 frames, featuring coffee, phone browsing, sleeping, programming, drawing, teaching, and transformations into a whale-armored warrior and a whale sailor outfit.
+
+The original personality file has moved unchanged to `themes/loli_maid/Character.md`. Grown Maid currently uses this fallback because it has no separate personality file. `env/Character.md` is no longer used. An existing personality file that is empty or unreadable causes an error; the desktop application retries after the file is corrected.
 
 The window position and selected theme are saved in `env/config.json`, which normally needs no manual setup. You can also edit it while the application is closed:
 
@@ -138,13 +141,15 @@ After configuring the models, run it in a terminal:
 
 The CLI window title is `FatFishCli`. Each ENTER keypress runs one round; there is no automatic continuous capture. Screenshots are processed in memory and sent to the configured vision model service; the fairy model receives the observation text and the local date and time when that round's vision observation finishes (`YYYY-MM-DD HH-mm-ss`, using a 24-hour clock). The vision model starts a new session each round. The fairy model retains its conversation and each round's timestamp within the same process, can maintain files in `memory`, and may choose to remain silent.
 
+The CLI always uses `themes/loli_maid/Character.md` for the fairy's personality, independently of the desktop application's saved theme selection.
+
 Other launch options:
 
 ```powershell
 # Capture the screen and run one model round, then exit
 & ./FatFish/x64/Debug/FatFishCli.exe --once
 
-# Use env and memory under another directory
+# Use env, memory, and themes under another directory
 & ./FatFish/x64/Debug/FatFishCli.exe --repo-root 'C:\path\to\FatFishFairy'
 
 # Show options
@@ -197,5 +202,7 @@ Both integration tests send monitor screenshots only to a local loopback test se
 After configuring the models, start one interactive `FatFishCli` process and complete **10 consecutive ENTER rounds**, waiting for both models to finish successfully each time. Then press **ESC** and confirm a clean exit. If any round fails, fix the problem and restart the 10-round verification. This verification captures the screen and contacts your configured real model service.
 
 Also start one `FatFishFairy` process using the configured real models and confirm that **at least two nonempty fairy speech results appear in its actual bubble within the first two minutes after startup**. Inspect each bubble update on screen; parsed `speak` calls, logs, or a passing local fixture test do not satisfy this requirement. Exit through the menu and confirm a clean shutdown. If the requirement is not met, fix the problem and restart the desktop verification.
+
+The default personality avoids commenting on the fairy itself or repeating comments about an unchanged screen. During bubble verification, show unrelated desktop content that changes as you interact with it.
 
 Changes to shared `Agents` code require full verification, including the desktop integration test; changes to one application require verification of the affected application. Project configuration changes require building and running unit tests for `Debug` / `Release` × `Win32` / `x64`. If only documentation or theme assets change, with no code or project configuration changes, inspect the changed content; builds and the verification above are not required.

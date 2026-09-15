@@ -47,6 +47,7 @@ class FairyDesktopWindow : public fatfish::ui::FairyWindow, public INativeContro
 private:
 	FilePath                                envFolder;
 	FilePath                                memoryFolder;
+	FilePath                                themesFolder;
 	Ptr<DesktopAgentRunner>                  agentRunner;
 	Ptr<FairyWindowLifetime>                 lifetime = Ptr(new FairyWindowLifetime);
 	const List<Ptr<DesktopTheme>>&           themes;
@@ -86,6 +87,7 @@ private:
 		SaveSelectedDesktopTheme(envFolder, themes[index]->name);
 		playback.SetTheme(themes[index]);
 		selectedTheme = index;
+		if (agentRunner) agentRunner->SetCharacterFile(themesFolder / themes[selectedTheme]->name / L"Character.md");
 		fairyImage->SetImage(images[playback.CurrentFrame().GetFullPath()], 0);
 		lastFrameTime = GetTickCount64();
 		for (vint i = 0; i < themeItems.Count(); i++)
@@ -171,7 +173,9 @@ private:
 
 		auto async = GetCurrentController()->AsyncService();
 		auto windowLifetime = lifetime;
-		agentRunner = Ptr(new DesktopAgentRunner(envFolder, memoryFolder, [async, windowLifetime](const WString& text)
+		agentRunner = Ptr(new DesktopAgentRunner(envFolder, memoryFolder,
+			themesFolder / themes[selectedTheme]->name / L"Character.md", themesFolder / L"loli_maid" / L"Character.md",
+			[async, windowLifetime](const WString& text)
 		{
 			async->InvokeInMainThread(nullptr, [windowLifetime, text]()
 			{
@@ -245,9 +249,11 @@ public:
 	}
 
 	// GuiMain owns the catalog for the entire lifetime of this window.
-	FairyDesktopWindow(const FilePath& environment, const FilePath& memory, const List<Ptr<DesktopTheme>>& desktopThemes, vuint64_t seed)
+	FairyDesktopWindow(const FilePath& environment, const FilePath& memory, const FilePath& artwork,
+		const List<Ptr<DesktopTheme>>& desktopThemes, vuint64_t seed)
 		: envFolder(environment)
 		, memoryFolder(memory)
+		, themesFolder(artwork)
 		, themes(desktopThemes)
 		, selectedTheme(LoadSelectedDesktopTheme(envFolder, themes))
 		, playback(themes[selectedTheme], seed)
@@ -322,7 +328,7 @@ void GuiMain()
 	LoadDesktopThemes(themesFolder, themes);
 	std::random_device entropy;
 	auto seed = (static_cast<vuint64_t>(entropy()) << 32) | entropy();
-	FairyDesktopWindow window(envFolder, memoryFolder, themes, seed);
+	FairyDesktopWindow window(envFolder, memoryFolder, themesFolder, themes, seed);
 	GetApplication()->Run(&window);
 }
 

@@ -286,11 +286,12 @@ function Assert-FixtureServer {
   if ($script:server.HasExited) { throw 'The local desktop model fixture exited unexpectedly.' }
 }
 
-function Start-FixtureServer {
+function Start-FixtureServer([string]$firstCharacter = '# 中文桌面角色 theme_a') {
   Stop-FixtureServer
   $script:serverRun++
   $script:serverRoot = Join-Path $fixture "server-$script:serverRun"
   [void][IO.Directory]::CreateDirectory($script:serverRoot)
+  $speechData.firstCharacter = $firstCharacter
   [IO.File]::WriteAllText((Join-Path $script:serverRoot 'data.json'), ($speechData | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
   $probe = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
   $probe.Start()
@@ -470,6 +471,7 @@ function Assert-Theme($mainWindow, [int]$themeIndex, [switch]$FirstFrame) {
 }
 
 function Select-Theme($mainWindow, [int]$themeIndex) {
+  $previous = [IO.File]::ReadAllText($configPath) | ConvertFrom-Json
   $submenu = Open-ThemesMenu $mainWindow
   Click-MenuItem $submenu $themeIndex $themeKeys.Count
   $selected = $null
@@ -481,7 +483,7 @@ function Select-Theme($mainWindow, [int]$themeIndex) {
   }
   if ($selected.selectedTheme -cne $themeKeys[$themeIndex]) { throw "Selecting theme menu row $themeIndex did not persist $($themeKeys[$themeIndex]); metadata ordering was not preserved." }
   Assert-Theme $mainWindow $themeIndex -FirstFrame
-  if ($selected.windowX -ne $mainWindow.X -or $selected.windowY -ne $mainWindow.Y -or $selected.retained.value -cne 'untouched') {
+  if ($selected.windowX -ne $previous.windowX -or $selected.windowY -ne $previous.windowY -or $selected.retained.value -cne 'untouched') {
     throw 'Selecting a theme did not preserve the saved window position and unrelated configuration.'
   }
 }
@@ -503,7 +505,7 @@ try {
   [void][IO.Directory]::CreateDirectory((Join-Path $fixture 'env'))
   [void][IO.Directory]::CreateDirectory((Join-Path $fixture 'memory'))
   Copy-Item -LiteralPath $executable -Destination (Join-Path $fixtureOutput 'FatFishFairy.exe')
-  foreach ($name in @('Tools.md', 'Guidance.md', 'Request_Vision.md', 'Request_Fairy.md', 'Character.md')) {
+  foreach ($name in @('Tools.md', 'Guidance.md', 'Request_Vision.md', 'Request_Fairy.md')) {
     [IO.File]::WriteAllText((Join-Path $fixture "env/$name"), "# 中文桌面测试 $name", [Text.UTF8Encoding]::new($false))
   }
   $speechData = @{
@@ -512,6 +514,8 @@ try {
     secondSpeech = "第二段回复。`n这一行来自同一次 speak。"
     followUpSpeech = '第三段回复来自工具反馈之后。'
     recoveredSpeech = '发生错误后已经恢复，继续观察桌面。'
+    fallbackCharacter = '# 中文桌面角色 loli_maid 回退'
+    secondCharacter = '# 中文桌面角色 theme_a'
   }
   $completeSpeech = $speechData.longSpeech + "`n" + $speechData.secondSpeech + "`n" + $speechData.followUpSpeech
   Start-FixtureServer
@@ -526,10 +530,17 @@ try {
     $themeFolder = Join-Path $themesFolder $themeKeys[$themeIndex]
     [void][IO.Directory]::CreateDirectory($themeFolder)
     [IO.File]::WriteAllText((Join-Path $themeFolder 'index.json'), '{"sample":3}', [Text.UTF8Encoding]::new($false))
+    if ($themeIndex -ne 2) {
+      [IO.File]::WriteAllText((Join-Path $themeFolder 'Character.md'), ('# 中文桌面角色 ' + $themeKeys[$themeIndex]), [Text.UTF8Encoding]::new($false))
+    }
     for ($stage = 1; $stage -le 3; $stage++) {
       [FatFishFairySmoke.Native]::CreateThemeFrame((Join-Path $themeFolder "sample_$stage.png"), $themeColors[$themeIndex], $stage)
     }
   }
+  # The third catalog theme deliberately lacks Character.md, and loli_maid is
+  # deliberately absent from the catalog: only its fallback prompt is needed.
+  [void][IO.Directory]::CreateDirectory((Join-Path $themesFolder 'loli_maid'))
+  [IO.File]::WriteAllText((Join-Path $themesFolder 'loli_maid/Character.md'), $speechData.fallbackCharacter, [Text.UTF8Encoding]::new($false))
   $configPath = Join-Path $fixture 'env/config.json'
   [IO.File]::WriteAllText($configPath, '{"windowX":123,"windowY":91,"retained":{"value":"untouched"}}', [Text.UTF8Encoding]::new($false))
   $application = Start-Process -FilePath (Join-Path $fixtureOutput 'FatFishFairy.exe') -WorkingDirectory $env:SystemRoot -WindowStyle Hidden -PassThru
@@ -595,7 +606,17 @@ try {
   # The first model response has remained blocked throughout animation, dragging
   # and menu selection. Now complete each round and hold the following request,
   # making speech replacement and automatic restart deterministic to inspect.
-  Complete-ModelRequests 1 5
+  Complete-ModelRequests 1 2
+  # Change selection while a fairy request is pending. Its next tool-feedback
+  # submission must use the new character without restarting this round.
+  Select-Theme $positioned 2
+  Complete-ModelRequests 3 3
+  Select-Theme $positioned 1
+  Complete-ModelRequests 4 4
+  # Switch during the last fairy follow-up so the following round must use the
+  # missing-character fallback without resetting the conversation.
+  Select-Theme $positioned 2
+  Complete-ModelRequests 5 5
   $spoken = Wait-Bubble $completeSpeech
   if ($spoken.Width -le $greeting.Width -or $spoken.Height -le $greeting.Height) { throw 'The native balloon did not resize for a long multiline model response.' }
   Assert-BubblePlacement $positioned $spoken
@@ -612,7 +633,9 @@ try {
     [void][FatFishFairySmoke.Native]::Capture($spoken.Handle, [IO.Path]::ChangeExtension($ScreenshotPath, 'speech.png'))
     [FatFishFairySmoke.Native]::CaptureDesktop($spoken.Handle, [IO.Path]::ChangeExtension($ScreenshotPath, 'speech-desktop.png'))
   }
-  Complete-ModelRequests 6 9
+  Complete-ModelRequests 6 8
+  Select-Theme $positioned 1
+  Complete-ModelRequests 9 9
   Wait-Bubble ''
   Complete-ModelRequests 10 10
   [void](Wait-Bubble '调用大模型发生错误：' -Prefix)
@@ -624,7 +647,7 @@ try {
   # The following restart/fallback runs also exit during a pending model POST.
   Close-ThroughMenu $positioned
   Assert-FixtureServer
-  Write-Output 'Native greeting shape/movement, responsive UI during a pending request, complete multiline speech, empty speech, error recovery, persistent fairy history and exit during a pending request passed.'
+  Write-Output 'Native greeting shape/movement, responsive UI during a pending request, complete multiline speech, empty speech, error recovery, theme character switching and fallback with persistent fairy history, and exit during a pending request passed.'
 
   $application.Dispose()
   Start-FixtureServer
@@ -635,13 +658,15 @@ try {
   Wait-ModelRequest 1
   Start-Sleep -Milliseconds 200
   Assert-Theme $restarted 1
+  Complete-ModelRequests 1 2
   Close-ThroughMenu $restarted
-  Write-Output 'Restart restored the dragged position and selected theme from the isolated env folder; second menu exit completed with code 0.'
+  Assert-FixtureServer
+  Write-Output 'Restart restored the dragged position and selected theme, submitted its character prompt, and exited with code 0.'
 
   $saved.selectedTheme = 'unknown_theme'
   [IO.File]::WriteAllText($configPath, ($saved | ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false))
   $application.Dispose()
-  Start-FixtureServer
+  Start-FixtureServer '# 中文桌面角色 theme_z'
   $application = Start-Process -FilePath (Join-Path $fixtureOutput 'FatFishFairy.exe') -WorkingDirectory $env:SystemRoot -WindowStyle Hidden -PassThru
   $fallback = Wait-MainWindow
   Assert-Window $fallback $saved.windowX $saved.windowY
@@ -649,8 +674,10 @@ try {
   Wait-ModelRequest 1
   Start-Sleep -Milliseconds 200
   Assert-Theme $fallback 0
+  Complete-ModelRequests 1 2
   Close-ThroughMenu $fallback
-  Write-Output 'Unknown selectedTheme defaulted to the first theme; final menu exit completed with code 0.'
+  Assert-FixtureServer
+  Write-Output 'Unknown selectedTheme defaulted to the first theme and its character prompt; final menu exit completed with code 0.'
 
   Stop-FixtureServer
   Remove-Item -LiteralPath (Join-Path $fixture 'env/apikey.json')

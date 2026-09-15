@@ -59,7 +59,11 @@ int wmain(int argc, wchar_t* argv[])
 		}
 		auto envFolder = root / L"env";
 		auto memoryFolder = root / L"memory";
-		FairyApplication application(envFolder, memoryFolder);
+		auto characterFile = root / L"themes" / L"loli_maid" / L"Character.md";
+		FairyApplication application(envFolder, memoryFolder, [characterFile]()
+		{
+			return LoadCharacterPrompt(characterFile, characterFile);
+		});
 		vl::glr::json::Parser outputParser;
 		application.ResponseReceived.Add(Func<void(bool, const WString&)>([&](bool vision, const WString& message)
 		{
