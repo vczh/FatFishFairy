@@ -40,11 +40,13 @@ namespace fatfish
 		vl::Func<void(vl::collections::List<MonitorSnapshot>&)> capture;
 		vl::Func<WebResponse(const vl::WString&)>         fetch;
 		vl::Func<vl::WString()>                          characterProvider;
+		vl::Func<void()>                                ensureDesktopAvailable;
 		vl::Ptr<CancellationToken>                      cancellation;
 
 		vl::WString                                     RunAgent(bool vision, vl::Ptr<vl::glr::json::JsonArray> history);
 		vl::WString                                     ExecuteTool(const vl::WString& name, const vl::WString& arguments, vl::WString& spoken, bool& speechSubmitted);
 		void                                            Initialize();
+		void                                            CheckDesktopAvailable();
 
 	public:
 		// Complete assistant JSON messages, before tool execution; true identifies Vision.
@@ -66,7 +68,8 @@ namespace fatfish
 		                                                    vl::Func<void(vl::collections::List<MonitorSnapshot>&)> snapshots,
 		                                                    vl::Func<WebResponse(const vl::WString&)> httpGet,
 		                                                    vl::Ptr<CancellationToken> cancellationToken = nullptr,
-		                                                    vl::Func<vl::WString()> loadCharacter = {});
+		                                                    vl::Func<vl::WString()> loadCharacter = {},
+		                                                    vl::Func<void()> checkDesktop = {});
 		// Join each agent's nonempty speak texts in order with newlines, across all tool replies.
 		// Forward the complete vision result to the fairy and return the complete fairy result.
 		vl::WString                                     RunRound();

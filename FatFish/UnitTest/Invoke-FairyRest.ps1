@@ -4,10 +4,10 @@ param(
   [string]$EvidenceDirectory = ''
 )
 
-# Opt-in Debug x64 test of a genuinely unavailable desktop. The user must lock
+# Opt-in Debug x64 test of a genuinely locked Windows session. The user must lock
 # the screen before running it and keep it locked until the test exits. This
 # script never locks/unlocks Windows and never forces a capture failure.
-# CDB observes native capture attempts and the actual progress-label callback.
+# CDB observes the real WTS query, absence of capture, and progress-label callback.
 # PrintWindow evidence is explicitly native rendering, not a locked-screen image.
 $ErrorActionPreference = 'Stop'
 $repository = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
@@ -70,22 +70,25 @@ $platformLines = [IO.File]::ReadAllLines($platformSource)
 $mainLines = [IO.File]::ReadAllLines($mainSource)
 $captureLine = 0
 $unavailableLine = 0
-$captureErrorLine = 0
+$sessionCheckLine = 0
+$sessionStateLine = 0
 $progressLine = 0
 for ($index = 0; $index -lt $platformLines.Length; $index++) {
   if ($platformLines[$index] -match '^\s*void CaptureMonitors\(List<MonitorSnapshot>& snapshots\)\s*$') { $captureLine = $index + 3 }
   if ($platformLines[$index] -match '^\s*ScreenCaptureUnavailable::ScreenCaptureUnavailable\(\)\s*$') { $unavailableLine = $index + 4 }
-  if ($platformLines[$index] -match '^\s*MonitorCaptureError::MonitorCaptureError\(') { $captureErrorLine = $index + 5 }
+  if ($platformLines[$index].Contains('CheckPlatformResult(WTSQuerySessionInformationW(WTS_CURRENT_SERVER_HANDLE, WTS_CURRENT_SESSION,')) { $sessionCheckLine = $index + 1 }
+  if ($platformLines[$index].Contains('return IsDesktopSessionAvailable(session.SessionState, session.SessionFlags);')) { $sessionStateLine = $index + 1 }
 }
 for ($index = 0; $index -lt $mainLines.Length; $index++) {
   if ($mainLines[$index].Contains('window->progressLabel->SetText(text);')) { $progressLine = $index + 1; break }
 }
-if ($captureLine -eq 0 -or $unavailableLine -eq 0 -or $captureErrorLine -eq 0 -or $progressLine -eq 0) { throw 'Cannot locate capture/progress tracepoints in the current sources.' }
+if (@($captureLine, $unavailableLine, $sessionCheckLine, $sessionStateLine, $progressLine) -contains 0) { throw 'Cannot locate session/capture/progress tracepoints in the current sources.' }
 $commands = @(
   '.lines -e',
-  ('bp `FatFishFairy!' + $platformSource + ':' + $captureLine + '` ".echo REST_CAPTURE; .time; gc"'),
-  ('bp `FatFishFairy!' + $platformSource + ':' + $unavailableLine + '` ".echo REST_UNAVAILABLE; .time; gc"'),
-  ('bp `FatFishFairy!' + $platformSource + ':' + $captureErrorLine + '` ".printf \"REST_CAPTURE_ERROR %mu code=%u\\n\", @@c++(operation->buffer + operation->start), @@c++(code); gc"'),
+  ('bp `FatFishFairy!' + $platformSource + ':' + $sessionCheckLine + '` ".echo REST_SESSION_CHECK; .time; gc"'),
+  ('bp `FatFishFairy!' + $platformSource + ':' + $sessionStateLine + '` ".printf \"REST_SESSION_STATE session=%u state=%d flags=%d\\n\", @@c++(session->SessionId), @@c++((int)session->SessionState), @@c++((int)session->SessionFlags); gc"'),
+  ('bp `FatFishFairy!' + $platformSource + ':' + $captureLine + '` ".echo REST_CAPTURE; gc"'),
+  ('bp `FatFishFairy!' + $platformSource + ':' + $unavailableLine + '` ".echo REST_UNAVAILABLE; gc"'),
   ('bp `FatFishFairy!' + $mainSource + ':' + $progressLine + '` ".printf \"REST_UI %mu\\n\", @@c++(this->text.buffer + this->text.start); gc"'),
   '.echo REST_TRACE_READY',
   'g'
@@ -100,7 +103,8 @@ $application = $null
 $window = $null
 $report = [ordered]@{
   passed = $false; evidenceDirectory = $fixture; applicationId = 0; modelRequests = 0
-  captureAttempts = 0; unavailableOutcomes = 0; deniedBitBlt = 0; retryIntervalMilliseconds = 0
+  sessionChecks = 0; captureAttempts = 0; unavailableOutcomes = 0; retryIntervalMilliseconds = 0
+  sessions = @(); sessionEvidence = 'CDB trace of the real WTS session query and availability decision; no state injection'
   uiProgress = @(); uiTextEvidence = 'CDB trace at the actual Main.cpp progress-label SetText call'
   nativeRenderingPath = ''; nativeRenderingError = ''; actualLockedScreenImage = $false
   greetingPreserved = $false; closeMilliseconds = 0; applicationExitCode = $null; error = ''
@@ -120,37 +124,49 @@ function Assert-NoModelRequest {
     # Do not read or save screenshot request bodies when the precondition fails.
     $request.Response.StatusCode = 503
     $request.Response.Close()
-    throw 'The desktop was capturable and issued a model request. Lock it before starting this opt-in test.'
+    throw 'The fairy issued a model request while this test expected session rest. Inspect the WTS session evidence in report.json and trace.log.'
   }
 }
 
-function Read-CaptureEvidence([string]$trace) {
+function Read-SessionEvidence([string]$trace) {
+  $report.sessionChecks = [regex]::Matches($trace, '(?m)^REST_SESSION_CHECK\r?$').Count
   $report.captureAttempts = [regex]::Matches($trace, '(?m)^REST_CAPTURE\r?$').Count
   $report.unavailableOutcomes = [regex]::Matches($trace, '(?m)^REST_UNAVAILABLE\r?$').Count
-  $report.deniedBitBlt = [regex]::Matches($trace, '(?m)^REST_CAPTURE_ERROR BitBlt code=5\r?$').Count
   $report.uiProgress = @([regex]::Matches($trace, '(?m)^REST_UI ([A-Z][0-9]*)\r?$') | ForEach-Object { $_.Groups[1].Value })
+  $report.sessions = @([regex]::Matches($trace, '(?ms)^REST_SESSION_CHECK\r?$(?:(?!^REST_SESSION_CHECK\r?$).)*') | ForEach-Object {
+    $block = $_.Value
+    $state = [regex]::Match($block, '(?m)^REST_SESSION_STATE session=(\d+) state=(\d+) flags=(-?\d+)\r?$')
+    [ordered]@{
+      queryCompleted = $state.Success
+      sessionId = $(if ($state.Success) { [uint32]$state.Groups[1].Value } else { $null })
+      state = $(if ($state.Success) { [int]$state.Groups[2].Value } else { $null })
+      flags = $(if ($state.Success) { [int]$state.Groups[3].Value } else { $null })
+      lockedOrInactive = $state.Success -and ($state.Groups[2].Value -ne '0' -or $state.Groups[3].Value -eq '0')
+      unavailable = $block -match '(?m)^REST_UNAVAILABLE\r?$'
+    }
+  })
 }
 
-function Assert-CaptureEvidence([string]$trace) {
-  Read-CaptureEvidence $trace
-  if ($report.captureAttempts -ne 2 -or $report.unavailableOutcomes -ne 2) { throw 'Expected exactly two real unavailable capture attempts.' }
-  $blocks = @([regex]::Matches($trace, '(?ms)^REST_CAPTURE\r?$(?:(?!^REST_CAPTURE\r?$).)*'))
-  foreach ($block in $blocks) {
-    if ($block.Value -notmatch '(?m)^REST_CAPTURE_ERROR BitBlt code=5\r?$' -or $block.Value -notmatch '(?m)^REST_UNAVAILABLE\r?$') { throw 'Each attempt must contain a real BitBlt access denial followed by capture unavailability.' }
+function Assert-SessionEvidence([string]$trace) {
+  Read-SessionEvidence $trace
+  if ($report.sessionChecks -ne 2 -or $report.unavailableOutcomes -ne 2) { throw 'Expected exactly two real unavailable Windows session checks.' }
+  if ($report.captureAttempts -ne 0) { throw 'The locked or inactive session reached monitor capture instead of resting before capture.' }
+  foreach ($session in $report.sessions) {
+    if (-not $session.queryCompleted -or -not $session.lockedOrInactive -or -not $session.unavailable) { throw 'Each session check must report real WTS locked or inactive state followed by session unavailability.' }
   }
-  $times = @([regex]::Matches($trace, '(?m)^REST_CAPTURE\r?\nDebug session time: [^\r\n]+\r?\nSystem Uptime: [^\r\n]+\r?\nProcess Uptime: (\d+) days (\d+):(\d+):(\d+)\.(\d+)') | ForEach-Object {
+  $times = @([regex]::Matches($trace, '(?m)^REST_SESSION_CHECK\r?\nDebug session time: [^\r\n]+\r?\nSystem Uptime: [^\r\n]+\r?\nProcess Uptime: (\d+) days (\d+):(\d+):(\d+)\.(\d+)') | ForEach-Object {
     ([double]$_.Groups[1].Value * 86400000) + ([double]$_.Groups[2].Value * 3600000) + ([double]$_.Groups[3].Value * 60000) + ([double]$_.Groups[4].Value * 1000) + [double]$_.Groups[5].Value
   })
-  if ($times.Count -ne 2) { throw 'CDB did not record both capture attempt timestamps.' }
+  if ($times.Count -ne 2) { throw 'CDB did not record both session check timestamps.' }
   $report.retryIntervalMilliseconds = [Math]::Round($times[1] - $times[0])
-  if ($report.retryIntervalMilliseconds -lt 59000 -or $report.retryIntervalMilliseconds -gt 65000) { throw 'The next real capture attempt did not occur after the 60-second rest.' }
-  if (($report.uiProgress -join ',') -cne 'V,L') { throw 'Expected V then bare L, with L preserved across the next unavailable capture.' }
+  if ($report.retryIntervalMilliseconds -lt 59000 -or $report.retryIntervalMilliseconds -gt 65000) { throw 'The next real Windows session check did not occur after the 60-second rest.' }
+  if (($report.uiProgress -join ',') -cne 'V,L') { throw 'Expected V then bare L, with L preserved across the next unavailable session check.' }
 }
 
 function Read-Greeting {
   $windows = @([FatFishFairySmoke.Native]::Windows($application.Id))
   $balloon = $windows | Where-Object ClassName -eq 'tooltips_class32' | Select-Object -First 1
-  if ($null -eq $balloon) { throw 'The stored startup greeting disappeared during capture rest.' }
+  if ($null -eq $balloon) { throw 'The stored startup greeting disappeared during session rest.' }
   return [FatFishFairySmoke.Native]::ControlText($balloon.Handle)
 }
 
@@ -175,12 +191,13 @@ try {
       if ($application.HasExited) { throw "The fairy exited before rest verification, code $($application.ExitCode)." }
       if ($null -eq $window) { $window = [FatFishFairySmoke.Native]::Windows($application.Id) | Where-Object { $_.ClassName -eq 'VczhWindow' -and $_.Width -ge 300 -and $_.Height -ge 300 } | Select-Object -First 1 }
     }
-    if ($debugger.HasExited) { throw 'CDB exited before the capture-rest test completed.' }
+    if ($debugger.HasExited) { throw 'CDB exited before the session-rest test completed.' }
     $trace = Read-Trace
     if ($trace -match '(?m)^(?:Ambiguous symbol error|Syntax error|Unable to resolve|Couldn.t resolve|No type information)|Extra character error|Type is not struct/class/union') { throw 'CDB could not resolve an observation tracepoint; inspect trace.log.' }
-    Read-CaptureEvidence $trace
+    Read-SessionEvidence $trace
+    if ($report.captureAttempts -ne 0) { throw 'The session gate allowed monitor capture during the locked-session test.' }
     if ($report.unavailableOutcomes -ge 1 -and $report.uiProgress.Count -gt 0 -and $report.uiProgress[-1] -ceq 'L' -and $null -ne $window) {
-      if ((Read-Greeting) -cne 'Hello, world!') { throw 'Capture rest replaced the existing bubble text.' }
+      if ((Read-Greeting) -cne 'Hello, world!') { throw 'Session rest replaced the existing bubble text.' }
       $firstUnavailable = $true
       if (-not $nativeCaptured) {
         $nativeCaptured = $true
@@ -191,12 +208,12 @@ try {
         } catch { $report.nativeRenderingError = 'PrintWindow unavailable: ' + $_.Exception.GetType().Name }
       }
     }
-    if ($report.captureAttempts -ge 2 -and $report.unavailableOutcomes -ge 2 -and $firstUnavailable) { break }
-    if (-not $firstUnavailable -and $clock.Elapsed.TotalSeconds -gt 30) { throw 'No real capture-unavailable outcome with UI label L was observed within 30 seconds.' }
+    if ($report.sessionChecks -ge 2 -and $report.unavailableOutcomes -ge 2 -and $firstUnavailable) { break }
+    if (-not $firstUnavailable -and $clock.Elapsed.TotalSeconds -gt 30) { throw 'No real locked or inactive session outcome with UI label L was observed within 30 seconds.' }
     Start-Sleep -Milliseconds 100
   }
   Assert-NoModelRequest
-  Assert-CaptureEvidence (Read-Trace)
+  Assert-SessionEvidence (Read-Trace)
   $report.greetingPreserved = (Read-Greeting) -ceq 'Hello, world!'
   if (-not $report.greetingPreserved) { throw 'The greeting was not preserved across both rests.' }
   Start-Sleep -Milliseconds 250
@@ -206,12 +223,12 @@ try {
   if (-not $application.WaitForExit(2000)) { throw 'Closing the fairy did not cancel its second 60-second rest within two seconds.' }
   $report.closeMilliseconds = $closing.ElapsedMilliseconds
   $report.applicationExitCode = $application.ExitCode
-  if ($application.ExitCode -ne 0) { throw 'The fairy did not exit cleanly after cancelling capture rest.' }
+  if ($application.ExitCode -ne 0) { throw 'The fairy did not exit cleanly after cancelling session rest.' }
   if (-not $debugger.WaitForExit(5000)) { throw 'CDB did not exit after the fairy closed.' }
   Assert-NoModelRequest
   $finalTrace = Read-Trace
-  Assert-CaptureEvidence $finalTrace
-  if ($finalTrace.Contains('Detected memory leaks!')) { throw 'Debug capture-rest verification reported a memory leak.' }
+  Assert-SessionEvidence $finalTrace
+  if ($finalTrace.Contains('Detected memory leaks!')) { throw 'Debug session-rest verification reported a memory leak.' }
   $report.passed = $true
 } catch {
   $report.error = $_.Exception.Message
@@ -222,6 +239,9 @@ try {
     [void]$application.WaitForExit(2000)
   }
   if ($null -ne $debugger -and -not $debugger.HasExited) { $debugger.Kill(); [void]$debugger.WaitForExit(5000) }
+  # Failures can precede the next polling read. Retain the latest native session
+  # and capture evidence on every exit path.
+  Read-SessionEvidence (Read-Trace)
   $listener.Stop()
   $listener.Close()
   [IO.File]::WriteAllText((Join-Path $fixture 'report.json'), ($report | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))

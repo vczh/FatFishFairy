@@ -76,6 +76,11 @@ int wmain(int argc, wchar_t* argv[])
 			{
 				application.RunRound();
 			}
+			catch (const ScreenCaptureUnavailable& error)
+			{
+				Console::WriteLine(error.Message());
+				exitCode = 1;
+			}
 			catch (const FairyContextRecoveryExhausted& error)
 			{
 				Console::WriteLine(L"Fairy round cancelled: " + error.Message());
@@ -99,6 +104,11 @@ int wmain(int argc, wchar_t* argv[])
 					try
 					{
 						application.RunRound();
+					}
+					catch (const ScreenCaptureUnavailable& error)
+					{
+						Console::WriteLine(error.Message());
+						Console::WriteLine(L"Press ENTER after unlocking or reconnecting, or ESC to exit.");
 					}
 					catch (const FairyContextRecoveryExhausted& error)
 					{

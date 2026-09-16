@@ -12,7 +12,7 @@ namespace fatfish
 								OperationCancelled();
 	};
 
-	// No monitor could be captured because desktop access was denied or none are active.
+	// The session is locked/disconnected, or no accessible monitor can be captured.
 	class ScreenCaptureUnavailable : public vl::Exception
 	{
 	public:
@@ -76,6 +76,13 @@ namespace fatfish
 	extern ApiConfig LoadApiConfig(const vl::filesystem::FilePath& envFolder, vl::glr::json::Parser& parser);
 	extern vl::WString PostChatCompletion(const ApiConfig& config, const vl::WString& body, vl::Ptr<CancellationToken> cancellation = nullptr);
 	extern WebResponse HttpGet(const vl::WString& url, vl::vint maxCharacters = 20000, vl::Ptr<CancellationToken> cancellation = nullptr);
+	// Classify WTS_CONNECTSTATE_CLASS and WTS_SESSIONSTATE_* values without querying Windows.
+	// Unknown active-session state is an ordinary error, never permission to observe.
+	extern bool IsDesktopSessionAvailable(vl::vint sessionState, vl::vint sessionFlags);
+	// Reusable query of this process's Windows session, independent of capture and agent execution.
+	extern bool IsDesktopSessionAvailable();
+	// Convert a locked/non-active session to the agent's cancellable rest path.
+	extern void EnsureDesktopSessionAvailable();
 	extern void CaptureMonitors(vl::collections::List<MonitorSnapshot>& snapshots);
 	// Clear previous output and retain successful monitors in enumeration order.
 	// Inject enumeration/capture to exercise the same aggregation without desktop I/O.

@@ -1,6 +1,7 @@
 #include "../../Agents/Platform.h"
 #include "../../Agents/Json.h"
 #include <VlppOS.Windows.h>
+#include <wtsapi32.h>
 
 using namespace fatfish;
 using namespace vl;
@@ -50,6 +51,33 @@ MonitorSnapshot MakePlatformSnapshot(vint index)
 
 TEST_FILE
 {
+	TEST_CASE(L"Desktop session availability uses connection and lock state without capturing monitors")
+	{
+		TEST_ASSERT(IsDesktopSessionAvailable(WTSActive, WTS_SESSIONSTATE_UNLOCK));
+		TEST_ASSERT(!IsDesktopSessionAvailable(WTSActive, WTS_SESSIONSTATE_LOCK));
+		for (vint state : { WTSConnected, WTSConnectQuery, WTSShadow, WTSDisconnected, WTSIdle, WTSListen, WTSReset, WTSDown, WTSInit })
+		{
+			for (vint flags : { static_cast<vint>(WTS_SESSIONSTATE_LOCK), static_cast<vint>(WTS_SESSIONSTATE_UNLOCK), static_cast<vint>(WTS_SESSIONSTATE_UNKNOWN) })
+			{
+				TEST_ASSERT(!IsDesktopSessionAvailable(state, flags));
+			}
+		}
+		for (vint flags : { static_cast<vint>(WTS_SESSIONSTATE_UNKNOWN), static_cast<vint>(-1), static_cast<vint>(2) })
+		{
+			TEST_EXCEPTION(IsDesktopSessionAvailable(WTSActive, flags), Exception, [](const Exception& error)
+			{
+				TEST_ASSERT(dynamic_cast<const ScreenCaptureUnavailable*>(&error) == nullptr);
+			});
+		}
+		for (vint state : { static_cast<vint>(-1), static_cast<vint>(WTSInit + 1) })
+		{
+			TEST_EXCEPTION(IsDesktopSessionAvailable(state, WTS_SESSIONSTATE_UNLOCK), Exception, [](const Exception& error)
+			{
+				TEST_ASSERT(dynamic_cast<const ScreenCaptureUnavailable*>(&error) == nullptr);
+			});
+		}
+	});
+
 	TEST_CASE(L"Capture aggregation keeps successful monitors in order after denied or unrelated failures")
 	{
 		List<MonitorSnapshot> snapshots;
@@ -118,7 +146,7 @@ TEST_FILE
 			throw MonitorCaptureError(L"BitBlt", ERROR_ACCESS_DENIED);
 		}), ScreenCaptureUnavailable, [](const ScreenCaptureUnavailable& error)
 		{
-			TEST_ASSERT(error.Message() == L"No accessible desktop monitors are available to capture.");
+			TEST_ASSERT(error.Message() == L"The desktop is unavailable for observation.");
 		});
 		TEST_ASSERT(attempts == 3 && snapshots.Count() == 0);
 		CaptureMonitors(snapshots, []() -> vint { return 1; }, [](vint index) { return MakePlatformSnapshot(index); });

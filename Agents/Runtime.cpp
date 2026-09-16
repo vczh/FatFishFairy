@@ -35,6 +35,7 @@ namespace fatfish
 	FairyApplication::FairyApplication(const FilePath& envFolder, const FilePath& memoryFolder, Func<WString()> loadCharacter, Ptr<CancellationToken> cancellationToken)
 		: memory(memoryFolder)
 		, characterProvider(loadCharacter)
+		, ensureDesktopAvailable(EnsureDesktopSessionAvailable)
 		, cancellation(cancellationToken)
 	{
 		if (!characterProvider) throw Exception(L"A character prompt provider is required.");
@@ -60,7 +61,7 @@ namespace fatfish
 
 	FairyApplication::FairyApplication(const FilePath& memoryFolder, const ApiConfig& apiConfig, const AgentPrompts& agentPrompts,
 		Func<WString(const WString&)> completion, Func<void(List<MonitorSnapshot>&)> snapshots, Func<WebResponse(const WString&)> httpGet,
-		Ptr<CancellationToken> cancellationToken, Func<WString()> loadCharacter)
+		Ptr<CancellationToken> cancellationToken, Func<WString()> loadCharacter, Func<void()> checkDesktop)
 		: config(apiConfig)
 		, memory(memoryFolder)
 		, prompts(agentPrompts)
@@ -68,14 +69,23 @@ namespace fatfish
 		, capture(snapshots)
 		, fetch(httpGet)
 		, characterProvider(loadCharacter)
+		, ensureDesktopAvailable(checkDesktop)
 		, cancellation(cancellationToken)
 	{
 		Initialize();
 	}
 
-	WString FairyApplication::ExecuteTool(const WString& name, const WString& arguments, WString& spoken, bool& speechSubmitted)
+	void FairyApplication::CheckDesktopAvailable()
 	{
 		if (cancellation) cancellation->ThrowIfCancelled();
+		if (ensureDesktopAvailable) ensureDesktopAvailable();
+		if (cancellation) cancellation->ThrowIfCancelled();
+	}
+
+	WString FairyApplication::ExecuteTool(const WString& name, const WString& arguments, WString& spoken, bool& speechSubmitted)
+	{
+		// Session changes must escape the tool-feedback error handler and enter rest.
+		CheckDesktopAvailable();
 		auto result = Ptr(new json::JsonObject);
 		try
 		{
@@ -233,8 +243,11 @@ namespace fatfish
 				SetBoolean(request, L"stream", true);
 				try
 				{
+					CheckDesktopAvailable();
 					auto response = complete(json::JsonToString(request));
-					if (cancellation) cancellation->ThrowIfCancelled();
+					// An already-dispatched request may finish after locking. Do not execute
+					// its tools or submit follow-ups against the abandoned observation.
+					CheckDesktopAvailable();
 					try
 					{
 						auto parsed = ParseChatCompletion(response, parser);
@@ -313,10 +326,12 @@ namespace fatfish
 	{
 		if (cancellation) cancellation->ThrowIfCancelled();
 		PhaseChanged(AgentPhase::Vision);
-		if (cancellation) cancellation->ThrowIfCancelled();
+		// Neither agent may run without an available session and a fresh successful
+		// capture. Let every capture failure escape, even if it left partial snapshots.
+		CheckDesktopAvailable();
 		List<MonitorSnapshot> snapshots;
 		capture(snapshots);
-		if (cancellation) cancellation->ThrowIfCancelled();
+		CheckDesktopAvailable();
 		if (snapshots.Count() == 0) throw ScreenCaptureUnavailable();
 		CaptureSucceeded();
 		if (cancellation) cancellation->ThrowIfCancelled();
@@ -356,6 +371,7 @@ namespace fatfish
 		if (cancellation) cancellation->ThrowIfCancelled();
 		PhaseChanged(AgentPhase::Fairy);
 		auto result = RunAgent(false, round);
+		CheckDesktopAvailable();
 		// Failed partial exchanges never enter retained history, even after trimming.
 		fairyRounds.Add(round);
 		return result;

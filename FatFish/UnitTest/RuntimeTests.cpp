@@ -1,6 +1,7 @@
 #include "../../Agents/Runtime.h"
 #include "../../Agents/Desktop.h"
 #include <Windows.h>
+#include <wtsapi32.h>
 
 using namespace vl;
 using namespace vl::collections;
@@ -111,7 +112,9 @@ public:
 	Ptr<CancellationToken> cancellation = Ptr(new CancellationToken);
 	List<WString> requests;
 	vint captures = 0;
+	vint fetches = 0;
 	Func<void(List<MonitorSnapshot>&)> captureOverride;
+	Func<void()> desktopAvailability;
 	WString terminal = LR"({"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":""}}]})";
 	WString observation = LR"({"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","tool_calls":[{"id":"observe","type":"function","function":{"name":"speak","arguments":"{\"text\":\"合成屏幕观察\"}"}}]}}]})";
 
@@ -153,7 +156,11 @@ public:
 				if (captureOverride) captureOverride(snapshots);
 				else Capture(snapshots);
 			},
-			[](const WString&) -> WebResponse { throw Exception(L"Unexpected network access in worker fixture."); }, cancellation, loadCharacter));
+			[this](const WString&) -> WebResponse
+			{
+				fetches++;
+				throw Exception(L"Unexpected network access in worker fixture.");
+			}, cancellation, loadCharacter, desktopAvailability));
 	}
 
 	Ptr<FairyApplication> Create()
@@ -276,6 +283,343 @@ WString JoinRuntimeProgress(const List<WString>& values)
 
 TEST_FILE
 {
+	TEST_CASE(L"Desktop session checks stop unavailable or unknown sessions before capture and honor cancellation")
+	{
+		for (vint scenario = 0; scenario < 4; scenario++)
+		{
+			RuntimeWorkerFixture fixture;
+			vint checks = 0;
+			vint captured = 0;
+			fixture.desktopAvailability = [&]()
+			{
+				checks++;
+				if (scenario == 0) throw ScreenCaptureUnavailable();
+				if (scenario == 1) throw Exception(L"Cannot query the Windows session.");
+				fixture.cancellation->Cancel();
+			};
+			if (scenario == 2) fixture.cancellation->Cancel();
+			auto application = fixture.Create();
+			application->CaptureSucceeded.Add(Func<void()>([&]() { captured++; }));
+			if (scenario == 0) TEST_EXCEPTION(application->RunRound(), ScreenCaptureUnavailable, [](const ScreenCaptureUnavailable&) {});
+			else if (scenario == 1) TEST_EXCEPTION(application->RunRound(), Exception, [](const Exception& error)
+			{
+				TEST_ASSERT(error.Message() == L"Cannot query the Windows session.");
+			});
+			else TEST_EXCEPTION(application->RunRound(), OperationCancelled, [](const OperationCancelled&) {});
+			TEST_ASSERT(checks == (scenario == 2 ? 0 : 1));
+			TEST_ASSERT(fixture.captures == 0 && fixture.requests.Count() == 0 && captured == 0);
+		}
+	});
+
+	TEST_CASE(L"Every unavailable Windows session blocks both models with or without completed fairy history")
+	{
+		for (bool withHistory : { false, true })
+		{
+			RuntimeWorkerFixture fixture;
+			vint sessionState = WTSActive;
+			vint sessionFlags = WTS_SESSIONSTATE_UNLOCK;
+			vint visionRequests = 0;
+			vint fairyRequests = 0;
+			vint captured = 0;
+			bool recovering = false;
+			WString previousObservation;
+			fixture.desktopAvailability = [&]()
+			{
+				if (!IsDesktopSessionAvailable(sessionState, sessionFlags)) throw ScreenCaptureUnavailable();
+			};
+			auto application = fixture.Create([&](const WString& body)
+			{
+				TEST_ASSERT(IsDesktopSessionAvailable(sessionState, sessionFlags));
+				json::Parser parser;
+				auto request = ParseJson(body, parser);
+				auto messages = GetField(request, L"messages").Cast<json::JsonArray>();
+				auto vision = GetString(request, L"model") == fixture.config.visionModel;
+				if (vision) visionRequests++;
+				else
+				{
+					fairyRequests++;
+					if (GetString(messages->items[messages->items.Count() - 1], L"role") == L"user")
+					{
+						if (recovering)
+						{
+							TEST_ASSERT(messages->items.Count() == (withHistory ? 6 : 2));
+							if (withHistory) TEST_ASSERT(GetString(messages->items[1], L"content") == previousObservation);
+						}
+						else previousObservation = GetString(messages->items[1], L"content");
+					}
+				}
+				return fixture.Complete(body);
+			});
+			application->CaptureSucceeded.Add(Func<void()>([&]() { captured++; }));
+			if (withHistory) TEST_ASSERT(application->RunRound() == L"第一轮回应");
+			auto completed = withHistory ? 1 : 0;
+			for (vint state : { WTSActive, WTSConnected, WTSConnectQuery, WTSShadow, WTSDisconnected, WTSIdle, WTSListen, WTSReset, WTSDown, WTSInit })
+			{
+				for (vint flags : { static_cast<vint>(WTS_SESSIONSTATE_LOCK), static_cast<vint>(WTS_SESSIONSTATE_UNLOCK), static_cast<vint>(WTS_SESSIONSTATE_UNKNOWN) })
+				{
+					if (state == WTSActive && flags != WTS_SESSIONSTATE_LOCK) continue;
+					sessionState = state;
+					sessionFlags = flags;
+					TEST_EXCEPTION(application->RunRound(), ScreenCaptureUnavailable, [](const ScreenCaptureUnavailable&) {});
+					TEST_ASSERT(visionRequests == completed * 2 && fairyRequests == completed * 2);
+					TEST_ASSERT(fixture.captures == completed && captured == completed && fixture.fetches == 0);
+				}
+			}
+			sessionState = WTSActive;
+			sessionFlags = WTS_SESSIONSTATE_UNLOCK;
+			recovering = true;
+			TEST_ASSERT(application->RunRound() == (withHistory ? L"" : L"第一轮回应"));
+			TEST_ASSERT(visionRequests == (completed + 1) * 2 && fairyRequests == (completed + 1) * 2);
+			TEST_ASSERT(fixture.captures == completed + 1 && captured == completed + 1);
+		}
+	});
+
+	TEST_CASE(L"Failed captures block both models despite an unlocked session and retained fairy history")
+	{
+		for (bool withHistory : { false, true })
+		{
+			RuntimeWorkerFixture fixture;
+			vint scenario = -1;
+			vint visionRequests = 0;
+			vint fairyRequests = 0;
+			vint captured = 0;
+			bool recovering = false;
+			WString previousObservation;
+			fixture.desktopAvailability = []() { TEST_ASSERT(IsDesktopSessionAvailable(WTSActive, WTS_SESSIONSTATE_UNLOCK)); };
+			fixture.captureOverride = [&](List<MonitorSnapshot>& snapshots)
+			{
+				if (scenario == -1)
+				{
+					fixture.Capture(snapshots);
+					return;
+				}
+				fixture.captures++;
+				if (scenario == 0) throw ScreenCaptureUnavailable();
+				if (scenario == 1) return;
+				if (scenario == 6)
+				{
+					// An exception aborts capture even if the callback has already populated its output.
+					snapshots.Add(MonitorSnapshot());
+					throw Exception(L"Capture failed after collecting a snapshot.");
+				}
+				CaptureMonitors(snapshots, [&]() { return scenario == 2 ? 0 : 2; }, [&](vint monitor) -> MonitorSnapshot
+				{
+					auto denied = scenario == 3 || (scenario == 5 && monitor == 0);
+					throw MonitorCaptureError(L"Synthetic capture", denied ? ERROR_ACCESS_DENIED : ERROR_INVALID_DATA);
+				});
+			};
+			auto application = fixture.Create([&](const WString& body)
+			{
+				TEST_ASSERT(scenario == -1);
+				json::Parser parser;
+				auto request = ParseJson(body, parser);
+				auto messages = GetField(request, L"messages").Cast<json::JsonArray>();
+				auto vision = GetString(request, L"model") == fixture.config.visionModel;
+				if (vision) visionRequests++;
+				else
+				{
+					fairyRequests++;
+					if (GetString(messages->items[messages->items.Count() - 1], L"role") == L"user")
+					{
+						if (recovering)
+						{
+							TEST_ASSERT(messages->items.Count() == (withHistory ? 6 : 2));
+							if (withHistory) TEST_ASSERT(GetString(messages->items[1], L"content") == previousObservation);
+						}
+						else previousObservation = GetString(messages->items[1], L"content");
+						TEST_ASSERT(wcsstr(GetString(messages->items[messages->items.Count() - 1], L"content").Buffer(),
+							(L"新截图观察 " + itow(fixture.captures)).Buffer()));
+					}
+				}
+				auto response = fixture.Complete(body);
+				return vision && messages->items.Count() == 2 ? RuntimeContextFixture::Speech(L"新截图观察 " + itow(fixture.captures)) : response;
+			});
+			application->CaptureSucceeded.Add(Func<void()>([&]() { captured++; }));
+			if (withHistory) TEST_ASSERT(application->RunRound() == L"第一轮回应");
+			auto completed = withHistory ? 1 : 0;
+			// Direct unavailability, empty output, no monitors, all denied, unrelated failures,
+			// mixed denied/unrelated failures, and an exception after partially filling output.
+			for (scenario = 0; scenario < 7; scenario++)
+			{
+				if (scenario < 4) TEST_EXCEPTION(application->RunRound(), ScreenCaptureUnavailable, [](const ScreenCaptureUnavailable&) {});
+				else if (scenario < 6) TEST_EXCEPTION(application->RunRound(), MonitorCaptureError, [](const MonitorCaptureError& error)
+				{
+					TEST_ASSERT(error.ErrorCode() == ERROR_INVALID_DATA);
+				});
+				else TEST_EXCEPTION(application->RunRound(), Exception, [](const Exception& error)
+				{
+					TEST_ASSERT(error.Message() == L"Capture failed after collecting a snapshot.");
+				});
+				TEST_ASSERT(visionRequests == completed * 2 && fairyRequests == completed * 2);
+				TEST_ASSERT(fixture.captures == completed + scenario + 1 && captured == completed && fixture.fetches == 0);
+			}
+			scenario = -1;
+			recovering = true;
+			TEST_ASSERT(application->RunRound() == (withHistory ? L"" : L"第一轮回应"));
+			TEST_ASSERT(visionRequests == (completed + 1) * 2 && fairyRequests == (completed + 1) * 2);
+			TEST_ASSERT(fixture.captures == completed + 8 && captured == completed + 1);
+		}
+	});
+
+	TEST_CASE(L"Locking during successful capture prevents capture notification and the first vision request")
+	{
+		RuntimeWorkerFixture fixture;
+		bool locked = false;
+		vint captured = 0;
+		fixture.desktopAvailability = [&]() { if (locked) throw ScreenCaptureUnavailable(); };
+		fixture.captureOverride = [&](List<MonitorSnapshot>& snapshots)
+		{
+			fixture.Capture(snapshots);
+			locked = true;
+		};
+		auto application = fixture.Create();
+		application->CaptureSucceeded.Add(Func<void()>([&]() { captured++; }));
+		TEST_EXCEPTION(application->RunRound(), ScreenCaptureUnavailable, [](const ScreenCaptureUnavailable&) {});
+		TEST_ASSERT(fixture.captures == 1 && captured == 0 && fixture.requests.Count() == 0);
+	});
+
+	TEST_CASE(L"Session changes during vision or fairy responses stop tools and follow-ups and discard the active round")
+	{
+		for (vint pendingRequest : { 1, 2, 3, 4 })
+		{
+			RuntimeWorkerFixture fixture;
+			bool locked = false;
+			bool recovering = false;
+			vint recoveredInitialFairyMessages = 0;
+			auto memoryFile = fixture.folder.root / L"state" / L"before-lock.md";
+			fixture.desktopAvailability = [&]() { if (locked) throw ScreenCaptureUnavailable(); };
+			auto application = fixture.Create([&](const WString& body)
+			{
+				auto response = fixture.Complete(body);
+				json::Parser parser;
+				auto request = ParseJson(body, parser);
+				auto messages = GetField(request, L"messages").Cast<json::JsonArray>();
+				if (GetString(request, L"model") == fixture.config.fairyModel
+					&& GetString(messages->items[messages->items.Count() - 1], L"role") == L"user")
+				{
+					if (recovering)
+					{
+						recoveredInitialFairyMessages = messages->items.Count();
+						TEST_ASSERT(GetString(request, L"tool_choice") == L"required");
+					}
+					else response = LR"({"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","tool_calls":[{"id":"remember","type":"function","function":{"name":"file_write","arguments":"{\"path\":\"before-lock.md\",\"content\":\"已完成的记忆\"}"}},{"id":"say","type":"function","function":{"name":"speak","arguments":"{\"text\":\"不得发布的未完成发言\"}"}}]}}]})";
+				}
+				if (!recovering && fixture.requests.Count() == pendingRequest) locked = true;
+				return response;
+			});
+			TEST_EXCEPTION(application->RunRound(), ScreenCaptureUnavailable, [](const ScreenCaptureUnavailable&) {});
+			TEST_ASSERT(fixture.captures == 1 && fixture.requests.Count() == pendingRequest && fixture.fetches == 0);
+			TEST_ASSERT(File(memoryFile).Exists() == (pendingRequest == 4));
+			U8String memoryBeforeRecovery;
+			if (pendingRequest == 4) memoryBeforeRecovery = ReadRuntimeFixtureBytes(memoryFile);
+			locked = false;
+			recovering = true;
+			TEST_ASSERT(application->RunRound() == L"第一轮回应");
+			TEST_ASSERT(fixture.captures == 2 && fixture.requests.Count() == pendingRequest + 4);
+			TEST_ASSERT(recoveredInitialFairyMessages == 2);
+			TEST_ASSERT(File(memoryFile).Exists() == (pendingRequest == 4));
+			if (pendingRequest == 4) TEST_ASSERT(ReadRuntimeFixtureBytes(memoryFile) == memoryBeforeRecovery);
+		}
+	});
+
+	TEST_CASE(L"Session availability is checked immediately before vision and fairy submissions including follow-ups")
+	{
+		for (vint lockAtCharacterRead : { 0, 1, 2 })
+		{
+			RuntimeWorkerFixture fixture;
+			bool locked = false;
+			vint characterReads = 0;
+			fixture.desktopAvailability = [&]() { if (locked) throw ScreenCaptureUnavailable(); };
+			auto application = fixture.Create([&](const WString& body) { return fixture.Complete(body); }, [&]()
+			{
+				if (++characterReads == lockAtCharacterRead) locked = true;
+				return fixture.prompts.character;
+			});
+			application->CaptureSucceeded.Add(Func<void()>([&]() { if (lockAtCharacterRead == 0) locked = true; }));
+			TEST_EXCEPTION(application->RunRound(), ScreenCaptureUnavailable, [](const ScreenCaptureUnavailable&) {});
+			TEST_ASSERT(fixture.captures == 1 && fixture.requests.Count() == (lockAtCharacterRead == 0 ? 0 : lockAtCharacterRead + 1));
+			TEST_ASSERT(characterReads == lockAtCharacterRead);
+		}
+	});
+
+	TEST_CASE(L"A session check between tool calls retains completed memory and prevents later HTTP and speech")
+	{
+		RuntimeWorkerFixture fixture;
+		bool lockAfterWrite = true;
+		auto memoryFile = fixture.folder.root / L"state" / L"completed-tool.md";
+		fixture.desktopAvailability = [&]()
+		{
+			if (lockAfterWrite && File(memoryFile).Exists()) throw ScreenCaptureUnavailable();
+		};
+		auto application = fixture.Create([&](const WString& body)
+		{
+			auto response = fixture.Complete(body);
+			json::Parser parser;
+			auto request = ParseJson(body, parser);
+			if (lockAfterWrite && GetString(request, L"model") == fixture.config.fairyModel)
+				return WString(LR"({"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","tool_calls":[{"id":"remember","type":"function","function":{"name":"file_write","arguments":"{\"path\":\"completed-tool.md\",\"content\":\"工具已经完成\"}"}},{"id":"fetch","type":"function","function":{"name":"http_get","arguments":"{\"url\":\"https://example.invalid/must-not-fetch\"}"}},{"id":"say","type":"function","function":{"name":"speak","arguments":"{\"text\":\"不得执行的发言\"}"}}]}}]})");
+			return response;
+		});
+		TEST_EXCEPTION(application->RunRound(), ScreenCaptureUnavailable, [](const ScreenCaptureUnavailable&) {});
+		TEST_ASSERT(fixture.requests.Count() == 3 && fixture.fetches == 0 && File(memoryFile).Exists());
+		auto completedMemory = ReadRuntimeFixtureBytes(memoryFile);
+		lockAfterWrite = false;
+		TEST_ASSERT(application->RunRound() == L"第一轮回应");
+		TEST_ASSERT(ReadRuntimeFixtureBytes(memoryFile) == completedMemory);
+	});
+
+	TEST_CASE(L"Windows session rest retries without capture and preserves completed history until a fresh unlocked round")
+	{
+		RuntimeWorkerFixture fixture;
+		EventObject published;
+		TEST_ASSERT(published.CreateAutoUnsignal(false));
+		List<WString> progress;
+		List<WString> results;
+		vint waits = 0;
+		vint saves = 0;
+		bool locked = false;
+		fixture.desktopAvailability = [&]() { if (locked) throw ScreenCaptureUnavailable(); };
+		auto application = fixture.Create([&](const WString& body)
+		{
+			json::Parser parser;
+			auto request = ParseJson(body, parser);
+			auto vision = GetString(request, L"model") == fixture.config.visionModel;
+			TEST_ASSERT(!locked && progress[progress.Count() - 1] == (vision ? L"V" : L"F"));
+			if (!vision && fixture.captures == 2)
+			{
+				auto messages = GetField(request, L"messages").Cast<json::JsonArray>();
+				if (GetString(messages->items[messages->items.Count() - 1], L"role") == L"user")
+					TEST_ASSERT(messages->items.Count() == 6);
+			}
+			return fixture.Complete(body);
+		});
+		DesktopAgentRunner runner([&]() { return application; }, fixture.cancellation,
+			[&](const WString& result)
+			{
+				results.Add(result);
+				if (results.Count() == 1) locked = true;
+				published.Signal();
+			}, [&](const WString&) { saves++; }, [&](const WString& text) { progress.Add(text); }, [&](vint milliseconds)
+			{
+				TEST_ASSERT(milliseconds == 60000 && locked);
+				TEST_ASSERT(fixture.captures == 1 && fixture.requests.Count() == 4 && results.Count() == 1 && saves == 1);
+				TEST_ASSERT(progress[progress.Count() - 1] == L"L");
+				waits++;
+				TEST_ASSERT(waits <= 3);
+				if (waits == 3) locked = false;
+				return false;
+			});
+		TEST_ASSERT(runner.Start());
+		auto beforeRest = published.WaitForTime(5000);
+		runner.RequestRound();
+		auto afterRest = published.WaitForTime(5000);
+		runner.StopAndWait();
+		TEST_ASSERT(beforeRest && afterRest && waits == 3 && saves == 1);
+		TEST_ASSERT(fixture.captures == 2 && fixture.requests.Count() == 8 && results.Count() == 2);
+		TEST_ASSERT(results[0] == L"第一轮回应" && results[1] == L"");
+		TEST_ASSERT(JoinRuntimeProgress(progress) == L"V,F,V,L,V,F");
+	});
+
 	TEST_CASE(L"Capture success is announced only for available snapshots and before any vision request")
 	{
 		// Explicitly unavailable, empty result, partial result, and cancellation from the success observer.

@@ -3,6 +3,7 @@
 #include <VlppOS.Windows.h>
 #include <winhttp.h>
 #include <wincodec.h>
+#include <wtsapi32.h>
 #include <exception>
 
 #pragma comment(lib, "winhttp.lib")
@@ -10,6 +11,7 @@
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "gdi32.lib")
 #pragma comment(lib, "user32.lib")
+#pragma comment(lib, "wtsapi32.lib")
 
 namespace fatfish
 {
@@ -25,7 +27,7 @@ namespace fatfish
 	}
 
 	ScreenCaptureUnavailable::ScreenCaptureUnavailable()
-		: Exception(L"No accessible desktop monitors are available to capture.")
+		: Exception(L"The desktop is unavailable for observation.")
 	{
 	}
 
@@ -214,6 +216,53 @@ namespace fatfish
 			auto errorCode = GetLastError();
 			throw Exception(WString(operation) + L" failed (Windows error " + itow(errorCode) + L").");
 		}
+	}
+
+	bool IsDesktopSessionAvailable(vint sessionState, vint sessionFlags)
+	{
+		// Local lock: SessionFlags == WTS_SESSIONSTATE_LOCK, even with WTSActive.
+		// Remote Desktop disconnected: SessionState == WTSDisconnected; ignore
+		// the lock flag because an unlocked but disconnected session is unavailable too.
+		// Remote Desktop connected but its host-side session locked: the connection
+		// may remain WTSActive, so require WTS_SESSIONSTATE_UNLOCK independently.
+		// LOCK is zero: compare these values, never test them as bit flags.
+		if (sessionState < WTSActive || sessionState > WTSInit)
+			throw Exception(L"Windows reported an unknown desktop connection state.");
+		if (sessionState != WTSActive || sessionFlags == WTS_SESSIONSTATE_LOCK) return false;
+		if (sessionFlags == WTS_SESSIONSTATE_UNLOCK) return true;
+		throw Exception(L"Windows reported an unknown desktop lock state.");
+	}
+
+	bool IsDesktopSessionAvailable()
+	{
+		// WTS_CURRENT_SESSION identifies the session running this process, whether
+		// local or remote. It does not query the RDP client's workstation or another
+		// user's console session. Both connection and lock state must permit work.
+		// Disconnecting RDP can leave this session present as WTSDisconnected + LOCK,
+		// so return false before capture. Locking only the RDP client can leave the
+		// host WTSActive + UNLOCK while capture is denied. Thus true only permits a
+		// capture attempt; RunRound must also obtain fresh snapshots before either agent.
+		// Capture success and an input desktop named "Default" cannot establish this:
+		// a locked host session can still allow all monitor captures to succeed.
+		struct SessionBuffer
+		{
+			LPWSTR value = nullptr;
+			~SessionBuffer() { if (value) WTSFreeMemory(value); }
+		} buffer;
+		DWORD bytes = 0;
+		CheckPlatformResult(WTSQuerySessionInformationW(WTS_CURRENT_SERVER_HANDLE, WTS_CURRENT_SESSION,
+			WTSSessionInfoEx, &buffer.value, &bytes), L"WTSQuerySessionInformation");
+		if (!buffer.value || bytes < sizeof(WTSINFOEXW))
+			throw Exception(L"Windows returned incomplete desktop session information.");
+		auto info = reinterpret_cast<WTSINFOEXW*>(buffer.value);
+		if (info->Level != 1) throw Exception(L"Windows returned an unsupported desktop session information level.");
+		auto& session = info->Data.WTSInfoExLevel1;
+		return IsDesktopSessionAvailable(session.SessionState, session.SessionFlags);
+	}
+
+	void EnsureDesktopSessionAvailable()
+	{
+		if (!IsDesktopSessionAvailable()) throw ScreenCaptureUnavailable();
 	}
 
 	struct InternetHandle
