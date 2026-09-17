@@ -11,6 +11,18 @@ Windows 桌面精灵，会观察屏幕、记住你的兴趣，并根据正在发
 
 两个程序都会将显示器截图发送给你配置的视觉模型，再由精灵模型根据描述回应。记忆保存在本地 `memory` 目录，重启后仍可使用。
 
+![](./Screenshot1.png)
+
+![](./Screenshot2.png)
+
+## License
+
+本仓库的许可证不包含 `themes` 文件夹中的图片。`reference.png` 均为网上下载，其他图片由 AI 根据这些参考图生成。`themes`文件夹里的图片仅供测试使用，在其他场景下用户应该创建自己的角色。
+
+## 隐私警告
+
+程序会实时且毫无保留地把用户屏幕上的内容上传到远端LLM，强烈建议只连接到自己部署的完全受控本地LLM。
+
 ## 准备与构建
 
 需要 Windows 10 或更新版本、Git、PowerShell 7，以及安装了 C++ 桌面开发组件、**v145 工具集**和最新 Windows 10 SDK 的 Visual Studio / Microsoft C++ Build Tools。
@@ -120,7 +132,3 @@ Pop-Location
 ```
 
 锁屏测试与完整开发验证流程见 [AGENTS.md](AGENTS.md#unittest-and-verification)。
-
-## License
-
-本仓库的许可证不包含 `themes` 文件夹中的图片。`reference.png` 均为网上下载，其他图片由 AI 根据这些参考图生成。
