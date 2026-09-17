@@ -16,6 +16,8 @@ Note that agent expects a OpenAI v1 chat completion protocol, it could use any o
 
 At the end of any coding task, update AGENTS.md and README.md to fix stale fact or add important information, commit and push local changes to the main branch, rebase if conflict.
 
+DO NOT repeat information of actual characters here, including information in `themes/job.updateThemes.prompt.md`, always expect to read files in the `themes` folder when needed.
+
 DO NOT maintain README.md as the Chinese translation of AGENTS.md. Instead it should only has the following topic:
 - How to prepare, build and test this repo.
 - How to use `FatFishCli` and `FatFishFairy` and what do they do from user's perspective.
@@ -75,11 +77,7 @@ In `REPO-ROOT/env` these shared prompt files are submitted to agents accordingly
 - `Request_Vision.md`, fixed request to the vision agent.
 - `Request_Fairy.md`, fixed request to the fairy agent.
 
-The fairy's character prompt is stored in `REPO-ROOT/themes/<theme>/Character.md`. The original prompt is preserved in `themes/loli_maid/Character.md`; `env/Character.md` is no longer used.
-
-`themes/grown_maid/Character.md` provides the grown blue whale maid's independent Chinese personality: a knowledgeable, gentle and encouraging adult with a playful anime-style delivery. She refers to herself only as `我` and addresses the user only as `主人`, without nicknames, including after theme switches. Its source research and design rationale are in `themes/grown_maid/Character.research.md`, which is documentation and must not be loaded as a character prompt.
-
-`themes/nurgling/Character.md` provides the Nurgling's independent Chinese personality: a gleefully simple, playful little prankster inspired by Warhammer 40,000, openly affectionate toward Nurgle as `慈父` or `纳垢爷爷`. Its four defining traits are easy delight, love of play, love of Grandfather Nurgle, and love of pranks; keep its affection direct rather than tsundere, sarcastic or concealed behind denials. It uses `我` (occasionally `小纳垢灵`) for itself and `你` or `园友` for the user, without carrying over either maid's identity after a theme switch. Its background research and the rationale for this cute desktop adaptation are in `themes/nurgling/Character.research.md`, which is documentation and must not be loaded as a character prompt.
+The fairy's character prompt is stored in `REPO-ROOT/themes/<theme>/Character.md`; `env/Character.md` is no longer used. Read the selected theme's files for its personality, background and design rationale. Any `Character.research.md` is documentation and must not be loaded as a character prompt.
 
 **IMPORTANT**: All prompt files listed here should be in Chinese. Except `Character.md`, all files could be modified during development.
 
@@ -312,19 +310,7 @@ Offline tests must cover history creation, UTF-8 multiline appends, preservation
 
 ### Playing Animation
 
-Theme assets are maintained separately from the desktop window implementation. Follow `themes/job.updateThemes.prompt.md` and mark an animation complete only after its files and metadata are verified. The catalog contains three themes with 30 animation series and 100 frames in total:
-
-- `themes/loli_maid`: 10 series and 34 frames: `coffee`, `espresso`, `latte_art`, `homework`, `reading_manga`, `sleeping`, `playing`, `programming`, `drawing`, and `transformer`. `espresso` and `transformer` have five frames each; all other series have three.
-- `themes/grown_maid`: 10 series and 36 frames: `coffee`, `espresso`, `latte_art`, `reading_phone`, `sleeping`, `programming`, `drawing`, `valkyrie`, `sailorfish`, and `teaching`. `espresso`, `valkyrie`, and `sailorfish` have five frames each; all other series have three.
-- `themes/nurgling`: 10 series and 30 frames: `garden`, `cauldron`, `bell`, `flies`, `mushroom`, `snack`, `dance`, `sleeping`, `programming`, and `gift`. Every series has three frames.
-
-In both maid themes, `espresso` has two puck-preparation frames followed by three latte-making frames. Respect explicit `xN` stage counts in the prompt. Frames use contiguous `<animation>_1.png` names, are 384×384 RGBA PNGs, and have a single connected white sticker backing with about 8 pixels of padding, a one-pixel `#E0E0E0` outer edge, and fully transparent exterior. Verify the actual alpha channel; a painted checkerboard is not transparency. Keep scale and placement consistent across an animation; use a stable outline for ordinary actions and let transformation outlines follow the changing body shape. Preserve existing character references and completed animations when adding series. `index.json` stores distinct frame counts, not playback repetition counts.
-
-In `loli_maid/reading_manga`, the viewer sees the book's outer covers; a turning interior page rises behind those covers and stays attached to the binding. In `loli_maid/playing`, the character kneels with smooth knees in front and feet folded behind under the skirt. In both maid themes' `programming` series, the viewer sees the monitor's rear casing with blue `C++` lettering, never screen contents. Preserve these corrections when updating later frames.
-
-The `grown_maid` main character has normal adult proportions, blue hair and eyes, a navy-and-white maid dress with a blue DeepSeek whale emblem, white thigh-high stockings, and a whale tail. Keep her identity consistent with the supplied reference through the five stages of each transformation. In `reading_phone`, she reclines on a sofa and the viewer sees the phone's back with a blue chibi whale maid decal; its screen faces her. In `sleeping`, she rests on a bed. In `drawing`, the pen display and monitor show her whale-maid self-portrait. In `teaching`, the adult holds a pointer at a whiteboard while the seated chibi whale maid student is seen only from behind.
-
-The `nurgling` character is a cute green chibi creature with two horns, short limbs, a face mouth and a large cartoon belly mouth. Preserve the supplied `themes/nurgling/reference.png` unchanged and retain this identity in every animation. Each three-frame series uses a fixed connected white sticker outline and matching alpha channel, with consistent scale and placement. In `programming`, the viewer sees the monitor's rear casing without lettering or screen contents; the blue `C++` lettering rule applies only to the two maid themes.
+Theme assets are maintained separately from the desktop window implementation. Read `themes/theme.json` for the current catalog, each theme's `index.json` for animation names and frame counts, and its `reference.png` and existing frames for character appearance and artwork details. Follow `themes/job.updateThemes.prompt.md` for animation content and asset requirements, and mark an animation complete only after its files and metadata are verified.
 
 The desktop player uses the selected theme, falling back to the first theme in `themes/theme.json` when no saved key matches. It selects an animation series randomly within that theme, shows one frame per second, and plays its complete frame sequence three consecutive times in total. It selects the next series randomly only after the last frame of the third playthrough, unless the user switches themes, and seeds its random generator afresh on each process start. Switching themes starts a fresh animation sequence immediately. `index.json` defines the distinct frame count. Playback is implemented by `Agents/Desktop.cpp` and the GUI timer, separately from the asset update job.
 
@@ -343,5 +329,5 @@ You can write anything in this section during development to make future works m
 - Cancellable Chat Completions use asynchronous WinHTTP internally. Close a pending request only after its initiating API call returns, then wait for `WINHTTP_CALLBACK_STATUS_HANDLE_CLOSING` before releasing callback state or read buffers.
 - A locked Windows session can report `WTSActive` plus `WTS_SESSIONSTATE_LOCK` while screen capture succeeds and `OpenInputDesktop` still identifies the input desktop as `Default`. Capture failure counts and input-desktop names therefore do not identify locking reliably. Use the direct WTS session state; Windows 7's documented reversed lock flags are outside the supported OS range.
 - `PrintWindow` can truncate painted native tooltip text despite correct stored text and complete on-screen rendering. Check long bubble text with the `.speech-desktop.png` capture from `Invoke-Fairy.ps1 -ScreenshotPath`, as well as text equality and native stem-region assertions.
-- The default character avoids commenting on the fairy itself or repeating comments about an unchanged screen. Use changing, unrelated desktop content during real-model bubble verification so valid silence does not prevent the two visible speech updates.
+- Read the selected theme's `Character.md` before real-model bubble verification and use changing desktop content suited to its guidance so valid silence does not prevent the two visible speech updates.
 - Antialiasing can make a progress glyph's exact skyblue pixel core shorter than the full rendered letter, especially `F`. Keep pixel-placement thresholds tolerant, compare distinct/stable glyph masks, and inspect the actual-screen progress crops to verify the text.
